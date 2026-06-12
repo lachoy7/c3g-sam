@@ -1,0 +1,59 @@
+# @package _global_
+# LERF-Mask mask segmentation eval (test only; not a training dataset).
+
+mode: test
+
+defaults:
+  - /dataset@_group_.lerf_mask_eval: lerf_mask_eval
+  - override /model/encoder: noposplat
+  - override /model/encoder/backbone: croco
+  - override /loss: [mse, lpips]
+
+wandb:
+  name: lerf_mask_eval
+  tags: [lerf_mask, sam, 256x256]
+
+model:
+  encoder:
+    backbone:
+      name: vggt_multi
+    gaussian_adapter:
+      sh_degree: 0
+      clamping: -1
+    name: vggt
+    num_gaussians: 2048
+    gs_params_head_type: dpt_gs
+    pose_free: true
+    intrinsics_embed_loc: None
+    intrinsics_embed_type: None
+    pretrained_weights: "./pretrained_weights/model.pt"
+    gaussian_feature_dim: 256
+  decoder:
+    make_scale_invariant: true
+    decrease_lpf_step: 1000
+    feature_detach: false
+
+data_loader:
+  test:
+    batch_size: 1
+    num_workers: 0
+
+test:
+  align_pose: true
+  compute_scores: false
+  save_image: false
+  save_compare: false
+  eval_lerf_mask: true
+  save_lerf_mask_preds: true
+
+train:
+  context_view_loss: true
+  reproj_model: sam
+  # Must be > 0 so main.py sets encoder.feature_dim for SAM (see src/main.py).
+  feature_rendering_loss: 0.01
+  segmentation_loss_weight: 1.0
+  sam_model_variant: sam_vit_h
+  sam_checkpoint: "./pretrained_weights/sam_vit_h.pth"
+
+trainer:
+  max_steps: 1

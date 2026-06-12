@@ -15,10 +15,20 @@ def rotate_sh(
     dtype = sh_coefficients.dtype
 
     # change the basis from YZX -> XYZ to fit the convention of e3nn
-    P = torch.tensor([[0, 0, 1], [1, 0, 0], [0, 1, 0]],
-                     dtype=sh_coefficients.dtype, device=sh_coefficients.device)
-    inversed_P = torch.tensor([[0, 1, 0], [0, 0, 1], [1, 0, 0], ],
-                              dtype=sh_coefficients.dtype, device=sh_coefficients.device)
+    P = torch.tensor(
+        [[0, 0, 1], [1, 0, 0], [0, 1, 0]],
+        dtype=sh_coefficients.dtype,
+        device=sh_coefficients.device,
+    )
+    inversed_P = torch.tensor(
+        [
+            [0, 1, 0],
+            [0, 0, 1],
+            [1, 0, 0],
+        ],
+        dtype=sh_coefficients.dtype,
+        device=sh_coefficients.device,
+    )
     permuted_rotation_matrix = inversed_P @ rotations @ P
 
     *_, n = sh_coefficients.shape

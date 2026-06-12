@@ -44,7 +44,7 @@ def do_training(hparams, model_constructor):
 
     trainer = pl.Trainer.from_argparse_args(hparams)
     trainer.fit(model)
-    
+
 
 def get_default_argument_parser():
     parser = ArgumentParser(add_help=False)

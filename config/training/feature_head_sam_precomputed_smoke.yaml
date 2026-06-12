@@ -1,0 +1,33 @@
+# @package _global_
+# One-step smoke test on Modal (first scene). Run via:
+#   modal run src/modal/train.py::smoke
+#   modal run src/modal/train.py::smoke --experiment distillation
+
+defaults:
+  - feature_head_sam_precomputed
+
+wandb:
+  name: sam_distill_scannet_smoke
+  mode: disabled
+
+hydra:
+  run:
+    dir: /outputs/runs/${wandb.name}
+
+dataset:
+  scannet_distill:
+    overfit_to_scene: scene0000_00
+
+trainer:
+  max_steps: 1
+  val_check_interval: 10000
+
+data_loader:
+  train:
+    num_workers: 0
+
+checkpointing:
+  every_n_train_steps: 1000000
+
+debug_decoder:
+  enabled: false

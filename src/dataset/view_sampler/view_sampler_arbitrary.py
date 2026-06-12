@@ -47,7 +47,9 @@ class ViewSamplerArbitrary(ViewSampler[ViewSamplerArbitraryCfg]):
             )
 
             if self.cfg.num_context_views >= 3 and len(self.cfg.context_views) == 2:
-                index_context = add_addtional_context_index(index_context, self.cfg.num_context_views)
+                index_context = add_addtional_context_index(
+                    index_context, self.cfg.num_context_views
+                )
             else:
                 assert len(self.cfg.context_views) == self.cfg.num_context_views
         index_target = torch.randint(

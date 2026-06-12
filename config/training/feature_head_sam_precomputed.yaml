@@ -1,0 +1,84 @@
+# @package _global_
+# Modal SAM distillation (ScanNet, precomputed features). Run via:
+#   modal run src/modal/train.py
+#   modal run src/modal/train.py --experiment distillation
+
+defaults:
+  - /dataset@_group_.scannet_distill: scannet_distill
+  - override /model/encoder: noposplat
+  - override /model/encoder/backbone: croco
+  - override /loss: [mse]
+
+wandb:
+  mode: online
+  entity: vrshy-stanford
+  project: distillation-training-full
+  name: sam_distill_scannet
+  tags: [scannet, 224x224, sam, precomputed, distillation, modal]
+
+hydra:
+  run:
+    dir: /outputs/runs/${wandb.name}
+
+dataset:
+  scannet_distill:
+    roots: [/scannet]
+    sam_features_root: /precompute_sam_features/scannet
+
+model:
+  encoder:
+    backbone:
+      name: vggt_multi
+    gaussian_adapter:
+      sh_degree: 0
+      clamping: -1
+    name: vggt
+    num_gaussians: 2048
+    gs_params_head_type: dpt_gs
+    pose_free: true
+    intrinsics_embed_loc: None
+    intrinsics_embed_type: None
+    pretrained_weights: /weights/gaussian_decoder.ckpt
+    init_points: one_point
+    gaussian_feature_dim: 256
+    different_learnable_tokens: false
+    freeze_backbone: true
+    freeze_instill_qk: true
+    freeze_geometry_head: true
+  decoder:
+    make_scale_invariant: true
+    decrease_lpf_step: 1000
+    feature_detach: true
+
+optimizer:
+  lr: 1.5e-5
+  warm_up_steps: 100
+  weight_decay: 0.05
+  feature_head_weight_decay: 0.01
+
+data_loader:
+  train:
+    batch_size: 6
+
+train:
+  pipeline: distillation
+  feature_cosine_loss_weight: 1.0
+  feature_mag_loss_weight: 0.5
+  context_view_loss: true
+
+trainer:
+  max_steps: 5001
+  val_check_interval: 500
+  accumulate_grad_batches: 2
+  log_every_n_steps: 1
+  devices: 1
+  num_sanity_val_steps: 0
+
+debug_decoder:
+  enabled: true
+  sam_checkpoint: /weights/sam_vit_h.pth
+  sam_model_variant: sam_vit_h
+
+checkpointing:
+  every_n_train_steps: 50
+  save_top_k: 20

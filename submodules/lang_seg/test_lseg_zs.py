@@ -117,7 +117,7 @@ class Options:
 
         parser.add_argument(
             "--module",
-            default='',
+            default="",
             help="select model definition",
         )
 
@@ -178,46 +178,24 @@ class Options:
         )
 
         # fewshot options
+        parser.add_argument("--nshot", type=int, default=1)
+        parser.add_argument("--fold", type=int, default=0, choices=[0, 1, 2, 3])
+        parser.add_argument("--nworker", type=int, default=0)
+        parser.add_argument("--bsz", type=int, default=1)
         parser.add_argument(
-            '--nshot', 
-            type=int, 
-            default=1
-            )
-        parser.add_argument(
-            '--fold', 
-            type=int, 
-            default=0, 
-            choices=[0, 1, 2, 3]
-            )
-        parser.add_argument(
-            '--nworker', 
-            type=int, 
-            default=0
-            )
-        parser.add_argument(
-            '--bsz', 
-            type=int, 
-            default=1
-            )
-        parser.add_argument(
-            '--benchmark', 
-            type=str, 
-            default='pascal',
-            choices=['pascal', 'coco', 'fss', 'c2p']
-            )
-        parser.add_argument(
-            '--datapath', 
-            type=str, 
-            default='fewshot_data/Datasets_HSN'
-            )
+            "--benchmark",
+            type=str,
+            default="pascal",
+            choices=["pascal", "coco", "fss", "c2p"],
+        )
+        parser.add_argument("--datapath", type=str, default="fewshot_data/Datasets_HSN")
 
         parser.add_argument(
             "--activation",
-            choices=['relu', 'lrelu', 'tanh'],
+            choices=["relu", "lrelu", "tanh"],
             default="relu",
             help="use which activation to activate the block",
         )
-
 
         self.parser = parser
 
@@ -255,7 +233,7 @@ def test(args):
         arch_option=args.arch_option,
         use_pretrained=args.use_pretrained,
         strict=args.strict,
-        logpath='fewshot/logpath_4T/',
+        logpath="fewshot/logpath_4T/",
         fold=args.fold,
         block_depth=0,
         nshot=args.nshot,
@@ -265,12 +243,21 @@ def test(args):
 
     Evaluator.initialize()
     if args.backbone in ["clip_resnet101"]:
-        FSSDataset.initialize(img_size=480, datapath=args.datapath, use_original_imgsize=False, imagenet_norm=True)
+        FSSDataset.initialize(
+            img_size=480,
+            datapath=args.datapath,
+            use_original_imgsize=False,
+            imagenet_norm=True,
+        )
     else:
-        FSSDataset.initialize(img_size=480, datapath=args.datapath, use_original_imgsize=False)
+        FSSDataset.initialize(
+            img_size=480, datapath=args.datapath, use_original_imgsize=False
+        )
     # dataloader
     args.benchmark = args.dataset
-    dataloader = FSSDataset.build_dataloader(args.benchmark, args.bsz, args.nworker, args.fold, 'test', args.nshot)
+    dataloader = FSSDataset.build_dataloader(
+        args.benchmark, args.bsz, args.nworker, args.fold, "test", args.nshot
+    )
 
     model = module.net.eval().cuda()
     # model = module.net.model.cpu()
@@ -281,40 +268,52 @@ def test(args):
         [0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25]
         if args.dataset == "citys"
         else [0.5, 0.75, 1.0, 1.25, 1.5, 1.75]
-    )  
+    )
 
-    f = open("logs/fewshot/log_fewshot-test_nshot{}_{}.txt".format(args.nshot, args.dataset), "a+")
+    f = open(
+        "logs/fewshot/log_fewshot-test_nshot{}_{}.txt".format(args.nshot, args.dataset),
+        "a+",
+    )
 
     utils.fix_randseed(0)
     average_meter = AverageMeter(dataloader.dataset)
     for idx, batch in enumerate(dataloader):
         batch = utils.to_cuda(batch)
-        image = batch['query_img']
-        target = batch['query_mask']
-        class_info = batch['class_id']
+        image = batch["query_img"]
+        target = batch["query_mask"]
+        class_info = batch["class_id"]
         # pred_mask = evaluator.parallel_forward(image, class_info)
         pred_mask = model(image, class_info)
         # assert pred_mask.argmax(dim=1).size() == batch['query_mask'].size()
         # 2. Evaluate prediction
-        if args.benchmark == 'pascal' and batch['query_ignore_idx'] is not None:
-            query_ignore_idx = batch['query_ignore_idx']
-            area_inter, area_union = Evaluator.classify_prediction(pred_mask.argmax(dim=1), target, query_ignore_idx)
+        if args.benchmark == "pascal" and batch["query_ignore_idx"] is not None:
+            query_ignore_idx = batch["query_ignore_idx"]
+            area_inter, area_union = Evaluator.classify_prediction(
+                pred_mask.argmax(dim=1), target, query_ignore_idx
+            )
         else:
-            area_inter, area_union = Evaluator.classify_prediction(pred_mask.argmax(dim=1), target)
+            area_inter, area_union = Evaluator.classify_prediction(
+                pred_mask.argmax(dim=1), target
+            )
 
         average_meter.update(area_inter, area_union, class_info, loss=None)
         average_meter.write_process(idx, len(dataloader), epoch=-1, write_batch_idx=1)
 
     # Write evaluation results
-    average_meter.write_result('Test', 0)
+    average_meter.write_result("Test", 0)
     test_miou, test_fb_iou = average_meter.compute_iou()
 
-    Logger.info('Fold %d, %d-shot ==> mIoU: %5.2f \t FB-IoU: %5.2f' % (args.fold, args.nshot, test_miou.item(), test_fb_iou.item()))
-    Logger.info('==================== Finished Testing ====================')
-    f.write('{}\n'.format(args.weights))
-    f.write('Fold %d, %d-shot ==> mIoU: %5.2f \t FB-IoU: %5.2f\n' % (args.fold, args.nshot, test_miou.item(), test_fb_iou.item()))
+    Logger.info(
+        "Fold %d, %d-shot ==> mIoU: %5.2f \t FB-IoU: %5.2f"
+        % (args.fold, args.nshot, test_miou.item(), test_fb_iou.item())
+    )
+    Logger.info("==================== Finished Testing ====================")
+    f.write("{}\n".format(args.weights))
+    f.write(
+        "Fold %d, %d-shot ==> mIoU: %5.2f \t FB-IoU: %5.2f\n"
+        % (args.fold, args.nshot, test_miou.item(), test_fb_iou.item())
+    )
     f.close()
-                
 
 
 if __name__ == "__main__":

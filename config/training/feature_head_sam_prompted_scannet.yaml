@@ -1,0 +1,93 @@
+# @package _global_
+# Modal prompted SAM training (ScanNet). Precomputed encoder features optional:
+#   dataset.scannet_2dseg.sam_features_root: /precompute_sam_features/scannet
+# Run via:
+#   modal run src/modal/train.py --experiment prompted
+
+defaults:
+  - /dataset@_group_.scannet_2dseg: scannet_2dseg
+  - override /model/encoder: noposplat
+  - override /model/encoder/backbone: croco
+  - override /loss: [mse, lpips]
+
+wandb:
+  mode: online
+  entity: vrshy-stanford
+  project: c3g-sam-base-full
+  name: sam_prompted_scannet
+  tags: [scannet, 224x224, sam, prompted, modal, precomputed]
+
+hydra:
+  run:
+    dir: /outputs/runs/${wandb.name}
+
+dataset:
+  scannet_2dseg:
+    roots: [/scannet]
+    input_image_shape: [224, 224]
+    sam_features_root: /precompute_sam_features/scannet
+
+model:
+  encoder:
+    backbone:
+      name: vggt_multi
+    gaussian_adapter:
+      sh_degree: 0
+      clamping: -1
+    name: vggt
+    num_gaussians: 2048
+    gs_params_head_type: dpt_gs
+    pose_free: true
+    intrinsics_embed_loc: None
+    intrinsics_embed_type: None
+    pretrained_weights: /weights/gaussian_decoder.ckpt
+    init_points: one_point
+    gaussian_feature_dim: 256
+    different_learnable_tokens: false
+    freeze_backbone: false
+    freeze_instill_qk: false
+    freeze_geometry_head: false
+  decoder:
+    make_scale_invariant: true
+    decrease_lpf_step: 1000
+    feature_detach: false
+
+optimizer:
+  lr: 1e-5
+  warm_up_steps: 100
+  weight_decay: 0.05
+  feature_head_weight_decay: 0.01
+
+train:
+  context_view_loss: true
+  prompt_mode: prompted
+  prompted_seg_loss_weight: 0.1
+  prompt_strategy: centroid
+  min_object_pixels: 16
+  reproj_model: sam
+  feature_rendering_loss: 1.0
+  sam_model_variant: sam_vit_h
+  sam_checkpoint: /weights/sam_vit_h.pth
+  use_lora: false
+  lora_rank: 4
+
+trainer:
+  max_steps: 5001
+  val_check_interval: 500
+  accumulate_grad_batches: 6
+  log_every_n_steps: 1
+  devices: 1
+  num_sanity_val_steps: 0
+
+checkpointing:
+  # Save best checkpoints from validation loss only (no step-based or IoU saves).
+  monitor: val/loss
+  mode: min
+  save_top_k: 5
+  save_weights_only: false
+  debug_log_interval: 50
+
+debug_decoder:
+  enabled: true
+  sam_checkpoint: /weights/sam_vit_h.pth
+  sam_model_variant: sam_vit_h

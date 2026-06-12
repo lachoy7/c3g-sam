@@ -50,7 +50,12 @@ class CameraHead(nn.Module):
         # Build the trunk using a sequence of transformer blocks.
         self.trunk = nn.Sequential(
             *[
-                Block(dim=dim_in, num_heads=num_heads, mlp_ratio=mlp_ratio, init_values=init_values)
+                Block(
+                    dim=dim_in,
+                    num_heads=num_heads,
+                    mlp_ratio=mlp_ratio,
+                    init_values=init_values,
+                )
                 for _ in range(trunk_depth)
             ]
         )
@@ -64,11 +69,18 @@ class CameraHead(nn.Module):
         self.embed_pose = nn.Linear(self.target_dim, dim_in)
 
         # Module for producing modulation parameters: shift, scale, and a gate.
-        self.poseLN_modulation = nn.Sequential(nn.SiLU(), nn.Linear(dim_in, 3 * dim_in, bias=True))
+        self.poseLN_modulation = nn.Sequential(
+            nn.SiLU(), nn.Linear(dim_in, 3 * dim_in, bias=True)
+        )
 
         # Adaptive layer normalization without affine parameters.
         self.adaln_norm = nn.LayerNorm(dim_in, elementwise_affine=False, eps=1e-6)
-        self.pose_branch = Mlp(in_features=dim_in, hidden_features=dim_in // 2, out_features=self.target_dim, drop=0)
+        self.pose_branch = Mlp(
+            in_features=dim_in,
+            hidden_features=dim_in // 2,
+            out_features=self.target_dim,
+            drop=0,
+        )
 
     def forward(self, aggregated_tokens_list: list, num_iterations: int = 4) -> list:
         """
@@ -117,15 +129,21 @@ class CameraHead(nn.Module):
                 module_input = self.embed_pose(pred_pose_enc)
 
             # Generate modulation parameters and split them into shift, scale, and gate components.
-            shift_msa, scale_msa, gate_msa = self.poseLN_modulation(module_input).chunk(3, dim=-1)
+            shift_msa, scale_msa, gate_msa = self.poseLN_modulation(module_input).chunk(
+                3, dim=-1
+            )
 
             # Adaptive layer normalization and modulation.
-            pose_tokens_modulated = gate_msa * modulate(self.adaln_norm(pose_tokens), shift_msa, scale_msa)
+            pose_tokens_modulated = gate_msa * modulate(
+                self.adaln_norm(pose_tokens), shift_msa, scale_msa
+            )
             pose_tokens_modulated = pose_tokens_modulated + pose_tokens
 
             pose_tokens_modulated = self.trunk(pose_tokens_modulated)
             # Compute the delta update for the pose encoding.
-            pred_pose_enc_delta = self.pose_branch(self.trunk_norm(pose_tokens_modulated))
+            pred_pose_enc_delta = self.pose_branch(
+                self.trunk_norm(pose_tokens_modulated)
+            )
 
             if pred_pose_enc is None:
                 pred_pose_enc = pred_pose_enc_delta
@@ -134,7 +152,10 @@ class CameraHead(nn.Module):
 
             # Apply final activation functions for translation, quaternion, and field-of-view.
             activated_pose = activate_pose(
-                pred_pose_enc, trans_act=self.trans_act, quat_act=self.quat_act, fl_act=self.fl_act
+                pred_pose_enc,
+                trans_act=self.trans_act,
+                quat_act=self.quat_act,
+                fl_act=self.fl_act,
             )
             pred_pose_enc_list.append(activated_pose)
 

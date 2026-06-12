@@ -20,15 +20,15 @@ TARGET_BYTES_PER_CHUNK = int(1e8)
 
 
 def get_example_keys(stage: Literal["test", "train"]) -> list[str]:
-    subsets = ['1K', '2K', '3K', '4K', '5K', '6K', '7K', '8K', '9K', '10K', '11K']
+    subsets = ["1K", "2K", "3K", "4K", "5K", "6K", "7K", "8K", "9K", "10K", "11K"]
     keys = []
     for subset in subsets:
         subdir = INPUT_IMAGE_DIR / subset
         # iterate through all the subdirectories
         for key in subdir.iterdir():
             if key.is_dir():
-                item = key.name.split('/')[-1]
-                item = '/'.join([subset, item])
+                item = key.name.split("/")[-1]
+                item = "/".join([subset, item])
                 print(item)
                 keys.append(item)
 
@@ -72,7 +72,7 @@ def opengl_c2w_to_opencv_w2c(c2w: np.ndarray) -> np.ndarray:
 
 
 def load_metadata(file_path: Path) -> Metadata:
-    with open(file_path, 'r') as file:
+    with open(file_path, "r") as file:
         data = json.load(file)
 
     url = ""
@@ -81,16 +81,23 @@ def load_metadata(file_path: Path) -> Metadata:
     cameras = []
 
     # FIXME: igore k1, k2, p1, p2, is this proper?
-    w = data['w']
-    h = data['h']
-    intrinsic = [data['fl_x'] / w, data['fl_y'] / h, data['cx'] / w, data['cy'] / h, 0.0, 0.0]
+    w = data["w"]
+    h = data["h"]
+    intrinsic = [
+        data["fl_x"] / w,
+        data["fl_y"] / h,
+        data["cx"] / w,
+        data["cy"] / h,
+        0.0,
+        0.0,
+    ]
     intrinsic = np.array(intrinsic, dtype=np.float32)
 
-    for frame in data['frames']:
+    for frame in data["frames"]:
         # extract number from string like "images/frame_00002.png"
-        frame_id = int(frame['file_path'].split('_')[-1].split('.')[0])
+        frame_id = int(frame["file_path"].split("_")[-1].split(".")[0])
         timestamps.append(frame_id)
-        extrinsic = frame['transform_matrix']
+        extrinsic = frame["transform_matrix"]
         extrinsic = np.array(extrinsic, dtype=np.float32)
         w2c = opengl_c2w_to_opencv_w2c(extrinsic)
         w2c = w2c[:3, :]
@@ -136,8 +143,8 @@ if __name__ == "__main__":
             chunk = []
 
         for key in keys:
-            image_dir = INPUT_IMAGE_DIR / key / 'images_8'
-            metadata_file = INPUT_IMAGE_DIR / key / 'transforms.json'
+            image_dir = INPUT_IMAGE_DIR / key / "images_8"
+            metadata_file = INPUT_IMAGE_DIR / key / "transforms.json"
             num_bytes = get_size(image_dir)
 
             if not image_dir.exists() or not metadata_file.exists():
@@ -150,15 +157,17 @@ if __name__ == "__main__":
 
             # Merge the images into the example.
             # from int to "frame_00001" format
-            image_names = [f"frame_{timestamp.item():0>5}" for timestamp in example["timestamps"]]
+            image_names = [
+                f"frame_{timestamp.item():0>5}" for timestamp in example["timestamps"]
+            ]
             try:
-                example["images"] = [
-                    images[image_name] for image_name in image_names
-                ]
+                example["images"] = [images[image_name] for image_name in image_names]
             except KeyError:
                 print(f"Skipping {key} because of missing images.")
                 continue
-            assert len(example["images"]) == len(example["timestamps"]), f"len(example['images'])={len(example['images'])}, len(example['timestamps'])={len(example['timestamps'])}"
+            assert (
+                len(example["images"]) == len(example["timestamps"])
+            ), f"len(example['images'])={len(example['images'])}, len(example['timestamps'])={len(example['timestamps'])}"
 
             # Add the key to the example.
             example["key"] = key
@@ -177,7 +186,9 @@ if __name__ == "__main__":
         print("Generate key:torch index...")
         index = {}
         stage_path = OUTPUT_DIR / stage
-        for chunk_path in tqdm(list(stage_path.iterdir()), desc=f"Indexing {stage_path.name}"):
+        for chunk_path in tqdm(
+            list(stage_path.iterdir()), desc=f"Indexing {stage_path.name}"
+        ):
             if chunk_path.suffix == ".torch":
                 chunk = torch.load(chunk_path)
                 for example in chunk:

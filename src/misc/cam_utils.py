@@ -18,21 +18,32 @@ def compose_extrinsic_RT(RT: torch.Tensor):
     Compose the standard form extrinsic matrix from RT.
     Batched I/O.
     """
-    return torch.cat([
-        RT,
-        torch.tensor([[[0, 0, 0, 1]]], dtype=RT.dtype, device=RT.device).repeat(RT.shape[0], 1, 1)
-        ], dim=1)
+    return torch.cat(
+        [
+            RT,
+            torch.tensor([[[0, 0, 0, 1]]], dtype=RT.dtype, device=RT.device).repeat(
+                RT.shape[0], 1, 1
+            ),
+        ],
+        dim=1,
+    )
 
 
 def camera_normalization(pivotal_pose: torch.Tensor, poses: torch.Tensor):
     # [1, 4, 4], [N, 4, 4]
 
-    canonical_camera_extrinsics = torch.tensor([[
-        [1, 0, 0, 0],
-        [0, 1, 0, 0],
-        [0, 0, 1, 0],
-        [0, 0, 0, 1],
-    ]], dtype=torch.float32, device=pivotal_pose.device)
+    canonical_camera_extrinsics = torch.tensor(
+        [
+            [
+                [1, 0, 0, 0],
+                [0, 1, 0, 0],
+                [0, 0, 1, 0],
+                [0, 0, 0, 1],
+            ]
+        ],
+        dtype=torch.float32,
+        device=pivotal_pose.device,
+    )
     pivotal_pose_inv = torch.inverse(pivotal_pose)
     camera_norm_matrix = torch.bmm(canonical_camera_extrinsics, pivotal_pose_inv)
 
@@ -43,6 +54,7 @@ def camera_normalization(pivotal_pose: torch.Tensor, poses: torch.Tensor):
 
 
 ####### Pose update from delta
+
 
 def rt2mat(R, T):
     mat = np.eye(4)
@@ -115,13 +127,14 @@ def SE3_exp(tau):
     return T
 
 
-def update_pose(cam_trans_delta: Float[Tensor, "batch 3"],
-                cam_rot_delta: Float[Tensor, "batch 3"],
-                extrinsics: Float[Tensor, "batch 4 4"],
-                # original_rot: Float[Tensor, "batch 3 3"],
-                # original_trans: Float[Tensor, "batch 3"],
-                # converged_threshold: float = 1e-4
-                ):
+def update_pose(
+    cam_trans_delta: Float[Tensor, "batch 3"],
+    cam_rot_delta: Float[Tensor, "batch 3"],
+    extrinsics: Float[Tensor, "batch 4 4"],
+    # original_rot: Float[Tensor, "batch 3 3"],
+    # original_trans: Float[Tensor, "batch 3"],
+    # converged_threshold: float = 1e-4
+):
     # extrinsics is c2w, here we need w2c as input, so we need to invert it
     bs = cam_trans_delta.shape[0]
 
@@ -146,13 +159,12 @@ def update_pose(cam_trans_delta: Float[Tensor, "batch 3"],
 
 #######  Pose estimation
 def inv(mat):
-    """ Invert a torch or numpy matrix
-    """
+    """Invert a torch or numpy matrix"""
     if isinstance(mat, torch.Tensor):
         return torch.linalg.inv(mat)
     if isinstance(mat, np.ndarray):
         return np.linalg.inv(mat)
-    raise ValueError(f'bad matrix type = {type(mat)}')
+    raise ValueError(f"bad matrix type = {type(mat)}")
 
 
 def get_pnp_pose(pts3d, opacity, K, H, W, opacity_threshold=0.3):
@@ -166,8 +178,15 @@ def get_pnp_pose(pts3d, opacity, K, H, W, opacity_threshold=0.3):
 
     mask = opacity > opacity_threshold
 
-    res = cv2.solvePnPRansac(pts3d[mask], pixels[mask], K, None,
-                             iterationsCount=100, reprojectionError=5, flags=cv2.SOLVEPNP_SQPNP)
+    res = cv2.solvePnPRansac(
+        pts3d[mask],
+        pixels[mask],
+        K,
+        None,
+        iterationsCount=100,
+        reprojectionError=5,
+        flags=cv2.SOLVEPNP_SQPNP,
+    )
     success, R, T, inliers = res
 
     assert success

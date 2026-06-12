@@ -35,7 +35,9 @@ class MetricComputer(LightningModule):
         # Skip scenes.
         for method in self.cfg.methods:
             if not (method.path / scene).exists():
-                print(f'Method "{method.name}" not found for scene "{scene}". Skipping "{scene}".')
+                print(
+                    f'Method "{method.name}" not found for scene "{scene}". Skipping "{scene}".'
+                )
                 return
 
         # Load the images.
@@ -70,7 +72,9 @@ class MetricComputer(LightningModule):
         self.print_preview_metrics(all_metrics, overlap_tag)
 
         # save per-scene results
-        self.per_scene_results.append({key: all_metrics[f"psnr_{key}"].item() for key in all_images.keys()})
+        self.per_scene_results.append(
+            {key: all_metrics[f"psnr_{key}"].item() for key in all_images.keys()}
+        )
         self.per_scene_results[-1]["scene"] = scene
         if not self.field_names:
             self.field_names = ["scene"] + list(all_images.keys())
@@ -83,14 +87,27 @@ class MetricComputer(LightningModule):
         scene_key = f"{batch_idx:0>6}_{scene}"
         for i in range(v):
             true_index = batch["target"]["index"][0, i]
-            row = [add_label(vcat(*inverse_normalize(batch["context"]["image"][0])), "Context"),
-                   add_label(vcat(batch["target"]["image"][0, i], torch.zeros_like(batch["target"]["image"][0, i])), "Ground Truth")]
+            row = [
+                add_label(
+                    vcat(*inverse_normalize(batch["context"]["image"][0])), "Context"
+                ),
+                add_label(
+                    vcat(
+                        batch["target"]["image"][0, i],
+                        torch.zeros_like(batch["target"]["image"][0, i]),
+                    ),
+                    "Ground Truth",
+                ),
+            ]
             for method in self.cfg.methods:
                 image = all_images[method.key][i]
                 error_map = torch.abs(batch["target"]["image"][0, i] - image)
                 error_map = error_map.mean(dim=0)
                 error_map = apply_color_map_to_image(error_map, "jet")
-                image = add_label(vcat(image, error_map), method.key + f" ({all_metrics[f'psnr_{method.key}']:.3f})")
+                image = add_label(
+                    vcat(image, error_map),
+                    method.key + f" ({all_metrics[f'psnr_{method.key}']:.3f})",
+                )
                 row.append(image)
             start_frame = batch["target"]["index"][0, 0]
             end_frame = batch["target"]["index"][0, -1]
@@ -113,7 +130,9 @@ class MetricComputer(LightningModule):
                 f"{Path.cwd()}/{self.cfg.side_by_side_path}/videos/{scene_key}.mp4"
             )
 
-    def print_preview_metrics(self, metrics: dict[str, float], overlap_tag: str | None = None) -> None:
+    def print_preview_metrics(
+        self, metrics: dict[str, float], overlap_tag: str | None = None
+    ) -> None:
         if getattr(self, "running_metrics", None) is None:
             self.running_metrics = metrics
             self.running_metric_steps = 1
@@ -134,8 +153,10 @@ class MetricComputer(LightningModule):
                 self.running_metric_steps_sub[overlap_tag] = 1
             else:
                 s = self.running_metric_steps_sub[overlap_tag]
-                self.running_metrics_sub[overlap_tag] = {k: ((s * v) + metrics[k]) / (s + 1)
-                                                         for k, v in self.running_metrics_sub[overlap_tag].items()}
+                self.running_metrics_sub[overlap_tag] = {
+                    k: ((s * v) + metrics[k]) / (s + 1)
+                    for k, v in self.running_metrics_sub[overlap_tag].items()
+                }
                 self.running_metric_steps_sub[overlap_tag] += 1
 
         def print_metrics(runing_metric):

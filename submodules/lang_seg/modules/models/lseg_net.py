@@ -5,19 +5,28 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .lseg_blocks import FeatureFusionBlock, Interpolate, _make_encoder, FeatureFusionBlock_custom, forward_vit
+from .lseg_blocks import (
+    FeatureFusionBlock,
+    Interpolate,
+    _make_encoder,
+    FeatureFusionBlock_custom,
+    forward_vit,
+)
 import clip
 import numpy as np
 import pandas as pd
 import os
 
+
 class depthwise_clipseg_conv(nn.Module):
     def __init__(self):
         super(depthwise_clipseg_conv, self).__init__()
         self.depthwise = nn.Conv2d(1, 1, kernel_size=3, padding=1)
-    
+
     def depthwise_clipseg(self, x, channels):
-        x = torch.cat([self.depthwise(x[:, i].unsqueeze(1)) for i in range(channels)], dim=1)
+        x = torch.cat(
+            [self.depthwise(x[:, i].unsqueeze(1)) for i in range(channels)], dim=1
+        )
         return x
 
     def forward(self, x):
@@ -29,7 +38,9 @@ class depthwise_clipseg_conv(nn.Module):
 class depthwise_conv(nn.Module):
     def __init__(self, kernel_size=3, stride=1, padding=1):
         super(depthwise_conv, self).__init__()
-        self.depthwise = nn.Conv2d(1, 1, kernel_size=kernel_size, stride=stride, padding=padding)
+        self.depthwise = nn.Conv2d(
+            1, 1, kernel_size=kernel_size, stride=stride, padding=padding
+        )
 
     def forward(self, x):
         # support for 4D tensor with NCHW
@@ -41,14 +52,14 @@ class depthwise_conv(nn.Module):
 
 
 class depthwise_block(nn.Module):
-    def __init__(self, kernel_size=3, stride=1, padding=1, activation='relu'):
+    def __init__(self, kernel_size=3, stride=1, padding=1, activation="relu"):
         super(depthwise_block, self).__init__()
         self.depthwise = depthwise_conv(kernel_size=3, stride=1, padding=1)
-        if activation == 'relu':
+        if activation == "relu":
             self.activation = nn.ReLU()
-        elif activation == 'lrelu':
+        elif activation == "lrelu":
             self.activation = nn.LeakyReLU()
-        elif activation == 'tanh':
+        elif activation == "tanh":
             self.activation = nn.Tanh()
 
     def forward(self, x, act=True):
@@ -59,16 +70,15 @@ class depthwise_block(nn.Module):
 
 
 class bottleneck_block(nn.Module):
-    def __init__(self, kernel_size=3, stride=1, padding=1, activation='relu'):
+    def __init__(self, kernel_size=3, stride=1, padding=1, activation="relu"):
         super(bottleneck_block, self).__init__()
         self.depthwise = depthwise_conv(kernel_size=3, stride=1, padding=1)
-        if activation == 'relu':
+        if activation == "relu":
             self.activation = nn.ReLU()
-        elif activation == 'lrelu':
+        elif activation == "lrelu":
             self.activation = nn.LeakyReLU()
-        elif activation == 'tanh':
+        elif activation == "tanh":
             self.activation = nn.Tanh()
-
 
     def forward(self, x, act=True):
         sum_layer = x.max(dim=1, keepdim=True)[0]
@@ -77,6 +87,7 @@ class bottleneck_block(nn.Module):
         if act:
             x = self.activation(x)
         return x
+
 
 class BaseModel(torch.nn.Module):
     def load(self, path):
@@ -91,6 +102,7 @@ class BaseModel(torch.nn.Module):
 
         self.load_state_dict(parameters)
 
+
 def _make_fusion_block(features, use_bn):
     return FeatureFusionBlock_custom(
         features,
@@ -100,6 +112,7 @@ def _make_fusion_block(features, use_bn):
         expand=False,
         align_corners=True,
     )
+
 
 class LSeg(BaseModel):
     def __init__(
@@ -148,21 +161,21 @@ class LSeg(BaseModel):
         self.arch_option = kwargs["arch_option"]
         if self.arch_option == 1:
             self.scratch.head_block = bottleneck_block(activation=kwargs["activation"])
-            self.block_depth = kwargs['block_depth']
+            self.block_depth = kwargs["block_depth"]
         elif self.arch_option == 2:
             self.scratch.head_block = depthwise_block(activation=kwargs["activation"])
-            self.block_depth = kwargs['block_depth']
+            self.block_depth = kwargs["block_depth"]
 
         self.scratch.output_conv = head
 
-        self.text = clip.tokenize(self.labels)    
-        
-    def forward(self, x, labelset=''):
-        if labelset == '':
+        self.text = clip.tokenize(self.labels)
+
+    def forward(self, x, labelset=""):
+        if labelset == "":
             text = self.text
         else:
-            text = clip.tokenize(labelset)    
-        
+            text = clip.tokenize(labelset)
+
         if self.channels_last == True:
             x.contiguous(memory_format=torch.channels_last)
 
@@ -185,15 +198,19 @@ class LSeg(BaseModel):
         image_features = self.scratch.head1(path_1)
 
         imshape = image_features.shape
-        image_features = image_features.permute(0,2,3,1).reshape(-1, self.out_c)
+        image_features = image_features.permute(0, 2, 3, 1).reshape(-1, self.out_c)
 
         # normalized features
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
-        
+
         logits_per_image = self.logit_scale * image_features.half() @ text_features.t()
 
-        out = logits_per_image.float().view(imshape[0], imshape[2], imshape[3], -1).permute(0,3,1,2)
+        out = (
+            logits_per_image.float()
+            .view(imshape[0], imshape[2], imshape[3], -1)
+            .permute(0, 3, 1, 2)
+        )
 
         if self.arch_option in [1, 2]:
             for _ in range(self.block_depth - 1):
@@ -201,14 +218,14 @@ class LSeg(BaseModel):
             out = self.scratch.head_block(out, False)
 
         out = self.scratch.output_conv(out)
-            
+
         return out
 
 
 class LSegNet(LSeg):
     """Network for semantic segmentation."""
-    def __init__(self, labels, path=None, scale_factor=0.5, crop_size=480, **kwargs):
 
+    def __init__(self, labels, path=None, scale_factor=0.5, crop_size=480, **kwargs):
         features = kwargs["features"] if "features" in kwargs else 256
         kwargs["use_bn"] = True
 
@@ -224,8 +241,3 @@ class LSegNet(LSeg):
 
         if path is not None:
             self.load(path)
-
-
-    
-        
-    

@@ -17,12 +17,16 @@ from ...dataset.types import BatchedExample, DataShim
 from ...geometry.projection import sample_image_grid
 from ..types import Gaussians
 from .backbone import Backbone, BackboneCfg, get_backbone
-from .common.gaussian_adapter import GaussianAdapter, GaussianAdapterCfg, UnifiedGaussianAdapter
+from .common.gaussian_adapter import (
+    GaussianAdapter,
+    GaussianAdapterCfg,
+    UnifiedGaussianAdapter,
+)
 from .encoder import Encoder
 from .visualization.encoder_visualizer_epipolar_cfg import EncoderVisualizerEpipolarCfg
 
 
-inf = float('inf')
+inf = float("inf")
 
 
 @dataclass
@@ -77,51 +81,98 @@ class EncoderNoPoSplat(Encoder[EncoderNoPoSplatCfg]):
         else:
             self.gaussian_adapter = GaussianAdapter(cfg.gaussian_adapter)
 
-        self.patch_size = self.backbone.patch_embed.patch_size[0] if hasattr(self.backbone, 'patch_embed') else self.backbone.aggregator.patch_size
+        self.patch_size = (
+            self.backbone.patch_embed.patch_size[0]
+            if hasattr(self.backbone, "patch_embed")
+            else self.backbone.aggregator.patch_size
+        )
         self.raw_gs_dim = 1 + self.gaussian_adapter.d_in  # 1 for opacity
 
         self.gs_params_head_type = cfg.gs_params_head_type
 
-        self.set_center_head(output_mode='pts3d', head_type='dpt', landscape_only=True,
-                           depth_mode=('exp', -inf, inf), conf_mode=None,)
+        self.set_center_head(
+            output_mode="pts3d",
+            head_type="dpt",
+            landscape_only=True,
+            depth_mode=("exp", -inf, inf),
+            conf_mode=None,
+        )
         self.set_gs_params_head(cfg, cfg.gs_params_head_type)
-        
-        self.dpt_gs_head = GSDPTHead(2048, output_dim = self.raw_gs_dim) if 'vggt' in cfg.backbone.name else None
-        self.dpt_head = DPTHead(2048) if 'vggt' in cfg.backbone.name else None
+
+        self.dpt_gs_head = (
+            GSDPTHead(2048, output_dim=self.raw_gs_dim)
+            if "vggt" in cfg.backbone.name
+            else None
+        )
+        self.dpt_head = DPTHead(2048) if "vggt" in cfg.backbone.name else None
         if self.dpt_head is not None:
             del self.head1, self.head2, self.downstream_head1, self.downstream_head2
         if self.dpt_gs_head is not None:
             del self.gaussian_param_head, self.gaussian_param_head2
 
-    def set_center_head(self, output_mode, head_type, landscape_only, depth_mode, conf_mode):
+    def set_center_head(
+        self, output_mode, head_type, landscape_only, depth_mode, conf_mode
+    ):
         self.backbone.depth_mode = depth_mode
         self.backbone.conf_mode = conf_mode
         # allocate heads
-        self.downstream_head1 = head_factory(head_type, output_mode, self.backbone, has_conf=bool(conf_mode))
-        self.downstream_head2 = head_factory(head_type, output_mode, self.backbone, has_conf=bool(conf_mode))
+        self.downstream_head1 = head_factory(
+            head_type, output_mode, self.backbone, has_conf=bool(conf_mode)
+        )
+        self.downstream_head2 = head_factory(
+            head_type, output_mode, self.backbone, has_conf=bool(conf_mode)
+        )
 
         # magic wrapper
-        self.head1 = transpose_to_landscape(self.downstream_head1, activate=landscape_only)
-        self.head2 = transpose_to_landscape(self.downstream_head2, activate=landscape_only)
+        self.head1 = transpose_to_landscape(
+            self.downstream_head1, activate=landscape_only
+        )
+        self.head2 = transpose_to_landscape(
+            self.downstream_head2, activate=landscape_only
+        )
 
     def set_gs_params_head(self, cfg, head_type):
-        if head_type == 'linear':
+        if head_type == "linear":
             self.gaussian_param_head = nn.Sequential(
                 nn.ReLU(),
                 nn.Linear(
                     self.backbone.dec_embed_dim,
-                    cfg.num_surfaces * self.patch_size ** 2 * self.raw_gs_dim,
+                    cfg.num_surfaces * self.patch_size**2 * self.raw_gs_dim,
                 ),
             )
 
             self.gaussian_param_head2 = deepcopy(self.gaussian_param_head)
-        elif head_type == 'dpt':
-            self.gaussian_param_head = head_factory(head_type, 'gs_params', self.backbone, has_conf=False, out_nchan=self.raw_gs_dim)  # for view1 3DGS
-            self.gaussian_param_head2 = head_factory(head_type, 'gs_params', self.backbone, has_conf=False, out_nchan=self.raw_gs_dim)  # for view2 3DGS
+        elif head_type == "dpt":
+            self.gaussian_param_head = head_factory(
+                head_type,
+                "gs_params",
+                self.backbone,
+                has_conf=False,
+                out_nchan=self.raw_gs_dim,
+            )  # for view1 3DGS
+            self.gaussian_param_head2 = head_factory(
+                head_type,
+                "gs_params",
+                self.backbone,
+                has_conf=False,
+                out_nchan=self.raw_gs_dim,
+            )  # for view2 3DGS
 
-        elif head_type == 'dpt_gs':
-            self.gaussian_param_head = head_factory(head_type, 'gs_params', self.backbone, has_conf=False, out_nchan=self.raw_gs_dim)
-            self.gaussian_param_head2 = head_factory(head_type, 'gs_params', self.backbone, has_conf=False, out_nchan=self.raw_gs_dim)
+        elif head_type == "dpt_gs":
+            self.gaussian_param_head = head_factory(
+                head_type,
+                "gs_params",
+                self.backbone,
+                has_conf=False,
+                out_nchan=self.raw_gs_dim,
+            )
+            self.gaussian_param_head2 = head_factory(
+                head_type,
+                "gs_params",
+                self.backbone,
+                has_conf=False,
+                out_nchan=self.raw_gs_dim,
+            )
         else:
             raise NotImplementedError(f"unexpected {head_type=}")
 
@@ -143,14 +194,14 @@ class EncoderNoPoSplat(Encoder[EncoderNoPoSplatCfg]):
     def _downstream_head(self, head_num, decout, img_shape, ray_embedding=None):
         B, S, D = decout[-1].shape
         # img_shape = tuple(map(int, img_shape))
-        head = getattr(self, f'head{head_num}')
+        head = getattr(self, f"head{head_num}")
         return head(decout, img_shape, ray_embedding=ray_embedding)
 
     def forward(
         self,
         context: dict,
         global_step: int = 0,
-        context_feature = None,
+        context_feature=None,
         visualization_dump: Optional[dict] = None,
     ) -> Gaussians:
         device = context["image"].device
@@ -160,44 +211,63 @@ class EncoderNoPoSplat(Encoder[EncoderNoPoSplatCfg]):
         if self.dpt_head is not None:
             dec, shape, patch_start_idx = self.backbone(context, return_views=False)
         else:
-            dec1, dec2, shape1, shape2, view1, view2 = self.backbone(context, return_views=True)
-            
+            dec1, dec2, shape1, shape2, view1, view2 = self.backbone(
+                context, return_views=True
+            )
+
         with torch.cuda.amp.autocast(enabled=False):
             if self.dpt_head is not None:
-                res = self.dpt_head(dec, context['image'], patch_start_idx)
-                
-                res1 = {'pts3d': res[0][:,0]}
-                res2 = {'pts3d': res[0][:,1]}
-                
+                res = self.dpt_head(dec, context["image"], patch_start_idx)
+
+                res1 = {"pts3d": res[0][:, 0]}
+                res2 = {"pts3d": res[0][:, 1]}
+
             else:
                 res1 = self._downstream_head(1, [tok.float() for tok in dec1], shape1)
                 res2 = self._downstream_head(2, [tok.float() for tok in dec2], shape2)
 
             # for the 3DGS heads
             if self.dpt_gs_head is not None:
-                GS_res = self.dpt_gs_head(dec, context['image'], patch_start_idx)
-                
-                GS_res1 = rearrange(GS_res[:,0], "b d h w -> b (h w) d")
-                GS_res2 = rearrange(GS_res[:,1], "b d h w -> b (h w) d")
-                
-                
-            elif self.gs_params_head_type == 'linear':
-                GS_res1 = rearrange_head(self.gaussian_param_head(dec1[-1]), self.patch_size, h, w)
-                GS_res2 = rearrange_head(self.gaussian_param_head2(dec2[-1]), self.patch_size, h, w)
-            elif self.gs_params_head_type == 'dpt':
-                GS_res1 = self.gaussian_param_head([tok.float() for tok in dec1], shape1[0].cpu().tolist())
+                GS_res = self.dpt_gs_head(dec, context["image"], patch_start_idx)
+
+                GS_res1 = rearrange(GS_res[:, 0], "b d h w -> b (h w) d")
+                GS_res2 = rearrange(GS_res[:, 1], "b d h w -> b (h w) d")
+
+            elif self.gs_params_head_type == "linear":
+                GS_res1 = rearrange_head(
+                    self.gaussian_param_head(dec1[-1]), self.patch_size, h, w
+                )
+                GS_res2 = rearrange_head(
+                    self.gaussian_param_head2(dec2[-1]), self.patch_size, h, w
+                )
+            elif self.gs_params_head_type == "dpt":
+                GS_res1 = self.gaussian_param_head(
+                    [tok.float() for tok in dec1], shape1[0].cpu().tolist()
+                )
                 GS_res1 = rearrange(GS_res1, "b d h w -> b (h w) d")
-                GS_res2 = self.gaussian_param_head2([tok.float() for tok in dec2], shape2[0].cpu().tolist())
+                GS_res2 = self.gaussian_param_head2(
+                    [tok.float() for tok in dec2], shape2[0].cpu().tolist()
+                )
                 GS_res2 = rearrange(GS_res2, "b d h w -> b (h w) d")
-            elif self.gs_params_head_type == 'dpt_gs':
-                GS_res1 = self.gaussian_param_head([tok.float() for tok in dec1], res1['pts3d'].permute(0, 3, 1, 2), view1['img'][:, :3], shape1[0].cpu().tolist())
+            elif self.gs_params_head_type == "dpt_gs":
+                GS_res1 = self.gaussian_param_head(
+                    [tok.float() for tok in dec1],
+                    res1["pts3d"].permute(0, 3, 1, 2),
+                    view1["img"][:, :3],
+                    shape1[0].cpu().tolist(),
+                )
                 GS_res1 = rearrange(GS_res1, "b d h w -> b (h w) d")
-                GS_res2 = self.gaussian_param_head2([tok.float() for tok in dec2], res2['pts3d'].permute(0, 3, 1, 2), view2['img'][:, :3], shape2[0].cpu().tolist())
+                GS_res2 = self.gaussian_param_head2(
+                    [tok.float() for tok in dec2],
+                    res2["pts3d"].permute(0, 3, 1, 2),
+                    view2["img"][:, :3],
+                    shape2[0].cpu().tolist(),
+                )
                 GS_res2 = rearrange(GS_res2, "b d h w -> b (h w) d")
 
-        pts3d1 = res1['pts3d']
+        pts3d1 = res1["pts3d"]
         pts3d1 = rearrange(pts3d1, "b h w d -> b (h w) d")
-        pts3d2 = res2['pts3d']
+        pts3d2 = res2["pts3d"]
         pts3d2 = rearrange(pts3d2, "b h w d -> b (h w) d")
         pts_all = torch.stack((pts3d1, pts3d2), dim=1)
         pts_all = pts_all.unsqueeze(-2)  # for cfg.num_surfaces
@@ -205,7 +275,9 @@ class EncoderNoPoSplat(Encoder[EncoderNoPoSplatCfg]):
         depths = pts_all[..., -1].unsqueeze(-1)
 
         gaussians = torch.stack([GS_res1, GS_res2], dim=1)
-        gaussians = rearrange(gaussians, "... (srf c) -> ... srf c", srf=self.cfg.num_surfaces)
+        gaussians = rearrange(
+            gaussians, "... (srf c) -> ... srf c", srf=self.cfg.num_surfaces
+        )
         densities = gaussians[..., 0].sigmoid().unsqueeze(-1)
 
         # Convert the features and depths into Gaussians.
@@ -243,9 +315,12 @@ class EncoderNoPoSplat(Encoder[EncoderNoPoSplatCfg]):
                 gaussians.rotations, "b v r srf spp xyzw -> b (v r srf spp) xyzw"
             )
             visualization_dump["means"] = rearrange(
-                gaussians.means, "b v (h w) srf spp xyz -> b v h w (srf spp) xyz", h=h, w=w
+                gaussians.means,
+                "b v (h w) srf spp xyz -> b v h w (srf spp) xyz",
+                h=h,
+                w=w,
             )
-            visualization_dump['opacities'] = rearrange(
+            visualization_dump["opacities"] = rearrange(
                 gaussians.opacities, "b v (h w) srf s -> b v h w srf s", h=h, w=w
             )
 

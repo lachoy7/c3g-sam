@@ -11,7 +11,7 @@ from torch.nn.parallel.scatter_gather import gather
 import encoding.utils as utils
 from encoding.nn import SegmentationLosses, SyncBatchNorm
 from encoding.parallel import DataParallelModel, DataParallelCriterion
-from encoding.datasets import test_batchify_fn 
+from encoding.datasets import test_batchify_fn
 from encoding.models.sseg import BaseNet
 from modules.lseg_module import LSegModule
 from utils import Resize
@@ -33,6 +33,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from data import get_dataset
 from additional_utils.encoding_models import MultiEvalModule as LSeg_MultiEvalModule
 import torchvision.transforms as transforms
+
 
 class Options:
     def __init__(self):
@@ -140,7 +141,7 @@ class Options:
         )
         parser.add_argument(
             "--module",
-            default='lseg',
+            default="lseg",
             help="select model definition",
         )
         # test option
@@ -202,7 +203,7 @@ class Options:
         )
         parser.add_argument(
             "--activation",
-            choices=['lrelu', 'tanh'],
+            choices=["lrelu", "tanh"],
             default="lrelu",
             help="use which activation to activate the block",
         )
@@ -217,7 +218,6 @@ class Options:
 
 
 def test(args):
-
     module = LSegModule.load_from_checkpoint(
         checkpoint_path=args.weights,
         data_path=args.data_path,
@@ -266,7 +266,7 @@ def test(args):
         drop_last=False,
         shuffle=False,
         collate_fn=test_batchify_fn,
-        **loader_kwargs
+        **loader_kwargs,
     )
 
     if isinstance(module.net, BaseNet):
@@ -295,7 +295,7 @@ def test(args):
             batch_size=args.batch_size,
             drop_last=True,
             shuffle=True,
-            **loader_kwargs
+            **loader_kwargs,
         )
         print("Reseting BN statistics")
         model.cuda()
@@ -309,7 +309,7 @@ def test(args):
         [0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25]
         if args.dataset == "citys"
         else [0.5, 0.75, 1.0, 1.25, 1.5, 1.75]
-    )  
+    )
 
     evaluator = LSeg_MultiEvalModule(
         model, num_classes, scales=scales, flip=True
@@ -381,14 +381,14 @@ def test(args):
                     predicts = [out]
                 else:
                     predicts = evaluator.parallel_forward(image)
-                    
+
                 metric.update(dst, predicts)
                 pixAcc, mIoU = metric.get()
-                
+
                 _, _, total_inter, total_union = metric.get_all()
                 per_class_iou += 1.0 * total_inter / (np.spacing(1) + total_union)
-                cnt+=1
-                
+                cnt += 1
+
                 tbar.set_description("pixAcc: %.4f, mIoU: %.4f" % (pixAcc, mIoU))
         else:
             with torch.no_grad():
@@ -409,12 +409,17 @@ def test(args):
                 mask.save(os.path.join(outdir, outname))
 
     if args.eval:
-        each_classes_iou = per_class_iou/cnt
+        each_classes_iou = per_class_iou / cnt
         print("pixAcc: %.4f, mIoU: %.4f" % (pixAcc, mIoU))
         print(each_classes_iou)
-        f.write("dataset {} ==> pixAcc: {:.4f}, mIoU: {:.4f}\n".format(args.dataset, pixAcc, mIoU))
-        for per_iou in each_classes_iou: f.write('{:.4f}, '.format(per_iou))
-        f.write('\n')
+        f.write(
+            "dataset {} ==> pixAcc: {:.4f}, mIoU: {:.4f}\n".format(
+                args.dataset, pixAcc, mIoU
+            )
+        )
+        for per_iou in each_classes_iou:
+            f.write("{:.4f}, ".format(per_iou))
+        f.write("\n")
 
 
 class ReturnFirstClosure(object):
@@ -432,5 +437,5 @@ class ReturnFirstClosure(object):
 if __name__ == "__main__":
     args = Options().parse()
     torch.manual_seed(args.seed)
-    args.test_batch_size = torch.cuda.device_count() 
+    args.test_batch_size = torch.cuda.device_count()
     test(args)

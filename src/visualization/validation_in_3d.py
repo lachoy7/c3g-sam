@@ -28,7 +28,7 @@ def render_projections(
     margin: float = 0.1,
     draw_label: bool = True,
     extra_label: str = "",
-    low_pass = 0.3,
+    low_pass=0.3,
 ) -> Float[Tensor, "batch 3 3 height width"]:
     device = gaussians.means.device
     b, _, _ = gaussians.means.shape

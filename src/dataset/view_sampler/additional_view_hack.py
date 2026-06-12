@@ -10,9 +10,7 @@ def add_addtional_context_index(
     left, right = indices.unbind(dim=-1)
     # evenly distribute the additional context views between the left and right views
     ctx_indices = torch.stack(
-        [
-            torch.linspace(left, right, number_of_context_views).long()
-        ],
+        [torch.linspace(left, right, number_of_context_views).long()],
         dim=-1,
     ).squeeze(-1)
     return ctx_indices

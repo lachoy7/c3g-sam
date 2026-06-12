@@ -23,6 +23,7 @@ import numpy as np
 
 from encoding.utils import SegmentationMetric
 
+
 class LSegmentationModule(pl.LightningModule):
     def __init__(self, data_path, dataset, batch_size, base_lr, max_epochs, **kwargs):
         super().__init__()
@@ -34,7 +35,7 @@ class LSegmentationModule(pl.LightningModule):
 
         self.epochs = max_epochs
         self.other_kwargs = kwargs
-        self.enabled = False #True mixed precision will make things complicated and leading to NAN error
+        self.enabled = False  # True mixed precision will make things complicated and leading to NAN error
         self.scaler = amp.GradScaler(enabled=self.enabled)
 
     def forward(self, x):
@@ -61,7 +62,6 @@ class LSegmentationModule(pl.LightningModule):
         inter, union = batch_intersection_union(pred.data, target.data, self.nclass)
 
         return correct, labeled, inter, union
-    
 
     def training_step(self, batch, batch_nb):
         img, target = batch
@@ -85,7 +85,7 @@ class LSegmentationModule(pl.LightningModule):
 
     def validation_step(self, batch, batch_nb):
         img, target = batch
-        out = self(img) 
+        out = self(img)
         multi_loss = isinstance(out, tuple)
         if multi_loss:
             val_loss = self.criterion(*out, target)
@@ -151,7 +151,7 @@ class LSegmentationModule(pl.LightningModule):
 
         if self.other_kwargs["midasproto"]:
             print("Using midas optimization protocol")
-            
+
             opt = torch.optim.Adam(
                 params_list,
                 lr=self.base_lr,
@@ -205,7 +205,7 @@ class LSegmentationModule(pl.LightningModule):
             split="train",
             mode=mode,
             transform=self.train_transform,
-            **kwargs
+            **kwargs,
         )
 
         self.num_classes = dset.num_class
@@ -229,18 +229,17 @@ class LSegmentationModule(pl.LightningModule):
             split="val",
             mode=mode,
             transform=self.val_transform,
-            **kwargs
+            **kwargs,
         )
-
 
     def get_criterion(self, **kwargs):
         return SegmentationLosses(
-            se_loss=kwargs["se_loss"], 
-            aux=kwargs["aux"], 
-            nclass=self.num_classes, 
-            se_weight=kwargs["se_weight"], 
-            aux_weight=kwargs["aux_weight"], 
-            ignore_index=kwargs["ignore_index"], 
+            se_loss=kwargs["se_loss"],
+            aux=kwargs["aux"],
+            nclass=self.num_classes,
+            se_weight=kwargs["se_weight"],
+            aux_weight=kwargs["aux_weight"],
+            ignore_index=kwargs["ignore_index"],
         )
 
     @staticmethod

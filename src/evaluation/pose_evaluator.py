@@ -76,15 +76,23 @@ class PoseEvaluator(LightningModule):
         )
 
         # optimize the pose using PnPRansac
-        pose_opt = get_pnp_pose(visualization_dump['means'][0, 1].squeeze(),
-                                visualization_dump['opacities'][0, 1].squeeze(),
-                                batch["context"]["intrinsics"][0, 1], h, w)
+        pose_opt = get_pnp_pose(
+            visualization_dump["means"][0, 1].squeeze(),
+            visualization_dump["opacities"][0, 1].squeeze(),
+            batch["context"]["intrinsics"][0, 1],
+            h,
+            w,
+        )
         pose_opt = pose_opt.to(self.device)
         # pose_opt = batch["context"]["extrinsics"][0, 0].clone()  # initial pose as the first view: I
 
         with torch.set_grad_enabled(True):
-            cam_rot_delta = nn.Parameter(torch.zeros([b, 1, 3], requires_grad=True, device=self.device))
-            cam_trans_delta = nn.Parameter(torch.zeros([b, 1, 3], requires_grad=True, device=self.device))
+            cam_rot_delta = nn.Parameter(
+                torch.zeros([b, 1, 3], requires_grad=True, device=self.device)
+            )
+            cam_trans_delta = nn.Parameter(
+                torch.zeros([b, 1, 3], requires_grad=True, device=self.device)
+            )
 
             opt_params = []
             opt_params.append(
@@ -126,9 +134,14 @@ class PoseEvaluator(LightningModule):
                     total_loss = total_loss + loss
 
                 # add ssim structure loss
-                ssim_, _, _, structure = ssim(rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w"),
-                                      rearrange(output.color, "b v c h w -> (b v) c h w"),
-                                      size_average=True, data_range=1.0, retrun_seprate=True, win_size=11)
+                ssim_, _, _, structure = ssim(
+                    rearrange(batch["target"]["image"], "b v c h w -> (b v) c h w"),
+                    rearrange(output.color, "b v c h w -> (b v) c h w"),
+                    size_average=True,
+                    data_range=1.0,
+                    retrun_seprate=True,
+                    win_size=11,
+                )
                 ssim_loss = (1 - structure) * 1.0
                 total_loss = total_loss + ssim_loss
 
@@ -137,14 +150,17 @@ class PoseEvaluator(LightningModule):
                 total_loss.backward()
                 with torch.no_grad():
                     pose_optimizer.step()
-                    new_extrinsic = update_pose(cam_rot_delta=rearrange(cam_rot_delta, "b v i -> (b v) i"),
-                                                cam_trans_delta=rearrange(cam_trans_delta, "b v i -> (b v) i"),
-                                                extrinsics=rearrange(extrinsics, "b v i j -> (b v) i j")
-                                                )
+                    new_extrinsic = update_pose(
+                        cam_rot_delta=rearrange(cam_rot_delta, "b v i -> (b v) i"),
+                        cam_trans_delta=rearrange(cam_trans_delta, "b v i -> (b v) i"),
+                        extrinsics=rearrange(extrinsics, "b v i j -> (b v) i j"),
+                    )
                     cam_rot_delta.data.fill_(0)
                     cam_trans_delta.data.fill_(0)
 
-                    extrinsics = rearrange(new_extrinsic, "(b v) i j -> b v i j", b=b, v=1)
+                    extrinsics = rearrange(
+                        new_extrinsic, "(b v) i j -> b v i j", b=b, v=1
+                    )
 
             # eval pose
             gt_pose = batch["context"]["extrinsics"][0, 1]
@@ -181,7 +197,9 @@ class PoseEvaluator(LightningModule):
             print(auc)
 
             for overlap_tag in self.all_mertrics_sub.keys():
-                tot_e_pose = np.array(self.all_mertrics_sub[overlap_tag][f"e_pose_{method.key}"])
+                tot_e_pose = np.array(
+                    self.all_mertrics_sub[overlap_tag][f"e_pose_{method.key}"]
+                )
                 tot_e_pose = np.array(tot_e_pose)
                 thresholds = [5, 10, 20]
                 auc = pose_auc(tot_e_pose, thresholds)
@@ -192,7 +210,9 @@ class PoseEvaluator(LightningModule):
         np.save("all_metrics.npy", self.all_mertrics)
         np.save("all_metrics_sub.npy", self.all_mertrics_sub)
 
-    def print_preview_metrics(self, metrics: dict[str, float], overlap_tag: str | None = None) -> None:
+    def print_preview_metrics(
+        self, metrics: dict[str, float], overlap_tag: str | None = None
+    ) -> None:
         if getattr(self, "running_metrics", None) is None:
             self.running_metrics = metrics
             self.running_metric_steps = 1
@@ -213,15 +233,21 @@ class PoseEvaluator(LightningModule):
             if getattr(self, "running_metrics_sub", None) is None:
                 self.running_metrics_sub = {overlap_tag: metrics}
                 self.running_metric_steps_sub = {overlap_tag: 1}
-                self.all_mertrics_sub = {overlap_tag: {k: [v.cpu().item()] for k, v in metrics.items()}}
+                self.all_mertrics_sub = {
+                    overlap_tag: {k: [v.cpu().item()] for k, v in metrics.items()}
+                }
             elif overlap_tag not in self.running_metrics_sub:
                 self.running_metrics_sub[overlap_tag] = metrics
                 self.running_metric_steps_sub[overlap_tag] = 1
-                self.all_mertrics_sub[overlap_tag] = {k: [v.cpu().item()] for k, v in metrics.items()}
+                self.all_mertrics_sub[overlap_tag] = {
+                    k: [v.cpu().item()] for k, v in metrics.items()
+                }
             else:
                 s = self.running_metric_steps_sub[overlap_tag]
-                self.running_metrics_sub[overlap_tag] = {k: ((s * v) + metrics[k]) / (s + 1)
-                                                         for k, v in self.running_metrics_sub[overlap_tag].items()}
+                self.running_metrics_sub[overlap_tag] = {
+                    k: ((s * v) + metrics[k]) / (s + 1)
+                    for k, v in self.running_metrics_sub[overlap_tag].items()
+                }
                 self.running_metric_steps_sub[overlap_tag] += 1
 
                 for k, v in metrics.items():

@@ -39,7 +39,7 @@ class LossLpips(Loss[LossLpipsCfg, LossLpipsCfgWrapper]):
         batch: BatchedExample,
         gaussians: Gaussians,
         global_step: int,
-        target_image = None,
+        target_image=None,
     ) -> Float[Tensor, ""]:
         image = target_image
 

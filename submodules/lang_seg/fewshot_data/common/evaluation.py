@@ -1,9 +1,11 @@
-r""" Evaluate mask prediction """
+r"""Evaluate mask prediction"""
+
 import torch
 
 
 class Evaluator:
-    r""" Computes intersection and union between prediction and ground-truth """
+    r"""Computes intersection and union between prediction and ground-truth"""
+
     @classmethod
     def initialize(cls):
         cls.ignore_index = 255
@@ -21,10 +23,12 @@ class Evaluator:
             pred_mask[gt_mask == cls.ignore_index] = cls.ignore_index
 
         # compute intersection and union of each episode in a batch
-        area_inter, area_pred, area_gt = [],  [], []
+        area_inter, area_pred, area_gt = [], [], []
         for _pred_mask, _gt_mask in zip(pred_mask, gt_mask):
             _inter = _pred_mask[_pred_mask == _gt_mask]
-            if _inter.size(0) == 0:  # as torch.histc returns error if it gets empty tensor (pytorch 1.5.1)
+            if (
+                _inter.size(0) == 0
+            ):  # as torch.histc returns error if it gets empty tensor (pytorch 1.5.1)
                 _area_inter = torch.tensor([0, 0], device=_pred_mask.device)
             else:
                 _area_inter = torch.histc(_inter, bins=2, min=0, max=1)

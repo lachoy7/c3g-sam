@@ -21,4 +21,4 @@ def get_dataset(name, **kwargs):
 
 
 def get_available_datasets():
-    return list(encoding_datasets.keys()) 
+    return list(encoding_datasets.keys())

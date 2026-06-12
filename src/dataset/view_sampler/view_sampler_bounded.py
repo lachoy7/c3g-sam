@@ -120,31 +120,33 @@ class ViewSamplerBounded(ViewSampler[ViewSamplerBoundedCfg]):
                 ).tolist()
         else:
             extra_views = []
-            
+
         if self.is_overfitting:
             index = torch.arange(num_views)
-            
-            if self.stage == 'train':
+
+            if self.stage == "train":
                 index = index[index % 8 != 0]
             else:
                 index = index[index % 8 == 0]
-                
+
             perm = torch.randperm(index.numel(), device=device)
-            index_context = index[perm[:self.cfg.num_context_views]]
-            
+            index_context = index[perm[: self.cfg.num_context_views]]
+
             index_context_left = index_context.min()
             index_context_right = index_context.max()
 
-            if self.stage == 'train' or self.stage == 'val':
-                index_target = torch.randint(index_context_left + self.cfg.min_distance_to_context_views,
-                                          index_context_right + 1 - self.cfg.min_distance_to_context_views,
-                                          size=(self.cfg.num_target_views,),
-                                          device=device)
+            if self.stage == "train" or self.stage == "val":
+                index_target = torch.randint(
+                    index_context_left + self.cfg.min_distance_to_context_views,
+                    index_context_right + 1 - self.cfg.min_distance_to_context_views,
+                    size=(self.cfg.num_target_views,),
+                    device=device,
+                )
             else:
                 index_target = torch.arange(
-                index_context_left,
-                index_context_right + 1,
-                device=device,
+                    index_context_left,
+                    index_context_right + 1,
+                    device=device,
                 )
 
         overlap = torch.tensor([0.5], dtype=torch.float32, device=device)  # dummy
@@ -152,7 +154,7 @@ class ViewSamplerBounded(ViewSampler[ViewSamplerBoundedCfg]):
         return (
             torch.tensor((index_context_left, *extra_views, index_context_right)),
             index_target,
-            overlap
+            overlap,
         )
 
     @property

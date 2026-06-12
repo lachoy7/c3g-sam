@@ -1,0 +1,9 @@
+defaults:
+  - base_view_sampler
+
+max_distance_between_context_views: 6
+min_distance_between_context_views: 1
+min_distance_to_context_views: 2
+warm_up_steps: 0
+initial_min_distance_between_context_views: 1
+initial_max_distance_between_context_views: 6

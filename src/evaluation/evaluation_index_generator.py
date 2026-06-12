@@ -31,7 +31,9 @@ class EvaluationIndexGeneratorCfg:
 class IndexEntry:
     context: tuple[int, int]
     target: tuple[int, ...]
-    overlap: Optional[str | float] = None  # choose from ["small", "medium", "large"] or a float number indicates the overlap ratio
+    overlap: Optional[str | float] = (
+        None  # choose from ["small", "medium", "large"] or a float number indicates the overlap ratio
+    )
 
 
 class EvaluationIndexGenerator(LightningModule):

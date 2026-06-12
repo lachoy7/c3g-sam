@@ -20,8 +20,8 @@ def _make_encoder(
     use_vit_only=False,
     use_readout="ignore",
     enable_attention_hooks=False,
-):  
-    if backbone == "clip_vitl16_384": 
+):
+    if backbone == "clip_vitl16_384":
         clip_pretrained, pretrained = _make_pretrained_clip_vitl16_384(
             use_pretrained,
             hooks=hooks,
@@ -30,7 +30,7 @@ def _make_encoder(
         )
         scratch = _make_scratch(
             [256, 512, 1024, 1024], features, groups=groups, expand=expand
-        ) 
+        )
     elif backbone == "clipRN50x16_vitl16_384":
         clip_pretrained, pretrained = _make_pretrained_clipRN50x16_vitl16_384(
             use_pretrained,
@@ -43,13 +43,13 @@ def _make_encoder(
         )
     elif backbone == "clip_vitb32_384":
         clip_pretrained, pretrained = _make_pretrained_clip_vitb32_384(
-            use_pretrained, 
-            hooks=hooks, 
+            use_pretrained,
+            hooks=hooks,
             use_readout=use_readout,
         )
         scratch = _make_scratch(
             [96, 192, 384, 768], features, groups=groups, expand=expand
-        ) 
+        )
     else:
         print(f"Backbone '{backbone}' not implemented")
         assert False
@@ -356,4 +356,3 @@ class FeatureFusionBlock_custom(nn.Module):
         output = self.out_conv(output)
 
         return output
-

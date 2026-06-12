@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Common Colors"""
+
 from typing import Union
 
 import torch
@@ -52,4 +53,6 @@ def get_color(color: Union[str, list]) -> Float[Tensor, "3"]:
             raise ValueError(f"Color should be 3 values (RGB) instead got {color}")
         return torch.tensor(color)
 
-    raise ValueError(f"Color should be an RGB list or string, instead got {type(color)}")
+    raise ValueError(
+        f"Color should be an RGB list or string, instead got {type(color)}"
+    )

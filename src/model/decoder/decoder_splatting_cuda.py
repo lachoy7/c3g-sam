@@ -50,12 +50,16 @@ class DecoderSplattingCUDA(Decoder[DecoderSplattingCUDACfg]):
         depth_mode: DepthRenderingMode | None = None,
         cam_rot_delta: Float[Tensor, "batch view 3"] | None = None,
         cam_trans_delta: Float[Tensor, "batch view 3"] | None = None,
-        global_step = -1,
+        global_step=-1,
     ) -> DecoderOutput:
-        
-        if self.low_pass_filter > 0.3 and global_step > 0 and self.cfg.decrease_lpf_step > 0 and global_step % self.cfg.decrease_lpf_step == 0:
+        if (
+            self.low_pass_filter > 0.3
+            and global_step > 0
+            and self.cfg.decrease_lpf_step > 0
+            and global_step % self.cfg.decrease_lpf_step == 0
+        ):
             self.low_pass_filter = max(0.3, self.low_pass_filter / 3.0)
-        
+
         b, v, _, _ = extrinsics.shape
         color, depth, feature = render_cuda(
             rearrange(extrinsics, "b v i j -> (b v) i j"),
@@ -68,10 +72,16 @@ class DecoderSplattingCUDA(Decoder[DecoderSplattingCUDACfg]):
             repeat(gaussians.covariances, "b g i j -> (b v) g i j", v=v),
             repeat(gaussians.harmonics, "b g c d_sh -> (b v) g c d_sh", v=v),
             repeat(gaussians.opacities, "b g -> (b v) g", v=v),
-            repeat(gaussians.feature, "b g c -> (b v) g c", v=v) if gaussians.feature is not None else None,
+            repeat(gaussians.feature, "b g c -> (b v) g c", v=v)
+            if gaussians.feature is not None
+            else None,
             scale_invariant=self.make_scale_invariant,
-            cam_rot_delta=rearrange(cam_rot_delta, "b v i -> (b v) i") if cam_rot_delta is not None else None,
-            cam_trans_delta=rearrange(cam_trans_delta, "b v i -> (b v) i") if cam_trans_delta is not None else None,
+            cam_rot_delta=rearrange(cam_rot_delta, "b v i -> (b v) i")
+            if cam_rot_delta is not None
+            else None,
+            cam_trans_delta=rearrange(cam_trans_delta, "b v i -> (b v) i")
+            if cam_trans_delta is not None
+            else None,
             low_pass_filter=self.low_pass_filter,
             feature_detach=self.feature_detach,
         )
@@ -79,5 +89,9 @@ class DecoderSplattingCUDA(Decoder[DecoderSplattingCUDACfg]):
 
         depth = rearrange(depth, "(b v) h w -> b v h w", b=b, v=v)
 
-        feature = rearrange(feature, "(b v) c h w -> b v c h w", b=b, v=v) if feature is not None else None
+        feature = (
+            rearrange(feature, "(b v) c h w -> b v c h w", b=b, v=v)
+            if feature is not None
+            else None
+        )
         return DecoderOutput(color, depth, feature)

@@ -12,6 +12,7 @@ from einops import rearrange
 from typing import List
 import torch
 import torch.nn as nn
+
 # import dust3r.utils.path_to_croco
 from .dpt_block import DPTOutputAdapter, Interpolate, make_fusion_block
 from .head_modules import UnetExtractor
@@ -117,8 +118,17 @@ class DPTOutputAdapter_fix(DPTOutputAdapter):
             nn.ReLU(),
         )
 
-    def forward(self, encoder_tokens: List[torch.Tensor], depths, imgs, image_size=None, conf=None):
-        assert self.dim_tokens_enc is not None, 'Need to call init(dim_tokens_enc) function first'
+    def forward(
+        self,
+        encoder_tokens: List[torch.Tensor],
+        depths,
+        imgs,
+        image_size=None,
+        conf=None,
+    ):
+        assert (
+            self.dim_tokens_enc is not None
+        ), "Need to call init(dim_tokens_enc) function first"
         # H, W = input_info['image_size']
         image_size = self.image_size if image_size is None else image_size
         H, W = image_size
@@ -133,14 +143,18 @@ class DPTOutputAdapter_fix(DPTOutputAdapter):
         layers = [self.adapt_tokens(l) for l in layers]
 
         # Reshape tokens to spatial representation
-        layers = [rearrange(l, 'b (nh nw) c -> b c nh nw', nh=N_H, nw=N_W) for l in layers]
+        layers = [
+            rearrange(l, "b (nh nw) c -> b c nh nw", nh=N_H, nw=N_W) for l in layers
+        ]
 
         layers = [self.act_postprocess[idx](l) for idx, l in enumerate(layers)]
         # Project layers to chosen feature dim
         layers = [self.scratch.layer_rn[idx](l) for idx, l in enumerate(layers)]
 
         # Fuse layers using refinement stages
-        path_4 = self.scratch.refinenet4(layers[3])[:, :, :layers[2].shape[2], :layers[2].shape[3]]
+        path_4 = self.scratch.refinenet4(layers[3])[
+            :, :, : layers[2].shape[2], : layers[2].shape[3]
+        ]
         path_3 = self.scratch.refinenet3(path_4, layers[2])
         path_2 = self.scratch.refinenet2(path_3, layers[1])
         path_1 = self.scratch.refinenet1(path_2, layers[0])
@@ -158,10 +172,21 @@ class DPTOutputAdapter_fix(DPTOutputAdapter):
 
 
 class PixelwiseTaskWithDPT(nn.Module):
-    """ DPT module for dust3r, can return 3D points + confidence for all pixels"""
+    """DPT module for dust3r, can return 3D points + confidence for all pixels"""
 
-    def __init__(self, *, n_cls_token=0, hooks_idx=None, dim_tokens=None,
-                 output_width_ratio=1, num_channels=1, postprocess=None, depth_mode=None, conf_mode=None, **kwargs):
+    def __init__(
+        self,
+        *,
+        n_cls_token=0,
+        hooks_idx=None,
+        dim_tokens=None,
+        output_width_ratio=1,
+        num_channels=1,
+        postprocess=None,
+        depth_mode=None,
+        conf_mode=None,
+        **kwargs,
+    ):
         super(PixelwiseTaskWithDPT, self).__init__()
         self.return_all_layers = True  # backbone needs to return all layers
         self.postprocess = postprocess
@@ -169,17 +194,19 @@ class PixelwiseTaskWithDPT(nn.Module):
         self.conf_mode = conf_mode
 
         assert n_cls_token == 0, "Not implemented"
-        dpt_args = dict(output_width_ratio=output_width_ratio,
-                        num_channels=num_channels,
-                        **kwargs)
+        dpt_args = dict(
+            output_width_ratio=output_width_ratio, num_channels=num_channels, **kwargs
+        )
         if hooks_idx is not None:
             dpt_args.update(hooks=hooks_idx)
         self.dpt = DPTOutputAdapter_fix(**dpt_args)
-        dpt_init_args = {} if dim_tokens is None else {'dim_tokens_enc': dim_tokens}
+        dpt_init_args = {} if dim_tokens is None else {"dim_tokens_enc": dim_tokens}
         self.dpt.init(**dpt_init_args)
 
     def forward(self, x, depths, imgs, img_info, conf=None):
-        out = self.dpt(x, depths, imgs, image_size=(img_info[0], img_info[1]), conf=conf)
+        out = self.dpt(
+            x, depths, imgs, image_size=(img_info[0], img_info[1]), conf=conf
+        )
         if self.postprocess:
             out = self.postprocess(out, self.depth_mode, self.conf_mode)
         return out
@@ -192,15 +219,17 @@ def create_gs_dpt_head(net, has_conf=False, out_nchan=3, postprocess_func=postpr
     assert net.dec_depth > 9
     l2 = net.dec_depth
     feature_dim = 256
-    last_dim = feature_dim//2
+    last_dim = feature_dim // 2
     ed = net.enc_embed_dim
     dd = net.dec_embed_dim
-    return PixelwiseTaskWithDPT(num_channels=out_nchan + has_conf,
-                                feature_dim=feature_dim,
-                                last_dim=last_dim,
-                                hooks_idx=[0, l2*2//4, l2*3//4, l2],
-                                dim_tokens=[ed, dd, dd, dd],
-                                postprocess=postprocess_func,
-                                depth_mode=net.depth_mode,
-                                conf_mode=net.conf_mode,
-                                head_type='gs_params')
+    return PixelwiseTaskWithDPT(
+        num_channels=out_nchan + has_conf,
+        feature_dim=feature_dim,
+        last_dim=last_dim,
+        hooks_idx=[0, l2 * 2 // 4, l2 * 3 // 4, l2],
+        dim_tokens=[ed, dd, dd, dd],
+        postprocess=postprocess_func,
+        depth_mode=net.depth_mode,
+        conf_mode=net.conf_mode,
+        head_type="gs_params",
+    )

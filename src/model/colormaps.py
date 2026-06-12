@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" Helper functions for visualizing outputs """
+"""Helper functions for visualizing outputs"""
 
 from dataclasses import dataclass
 from typing import Optional
@@ -25,6 +25,7 @@ from .colors import WHITE, BLACK
 
 # Colormaps = Literal["default", "turbo", "viridis", "magma", "inferno", "cividis", "gray", "pca"]
 Colormaps = "turbo"
+
 
 @dataclass(frozen=True)
 class ColormapOptions:
@@ -72,7 +73,8 @@ def apply_colormap(
             output = output - torch.min(output)
             output = output / (torch.max(output) + eps)
         output = (
-            output * (colormap_options.colormap_max - colormap_options.colormap_min) + colormap_options.colormap_min
+            output * (colormap_options.colormap_max - colormap_options.colormap_min)
+            + colormap_options.colormap_min
         )
         output = torch.clip(output, 0, 1)
         if colormap_options.invert:
@@ -89,7 +91,9 @@ def apply_colormap(
     raise NotImplementedError
 
 
-def apply_float_colormap(image: Float[Tensor, "*bs 1"], colormap: Colormaps = "viridis"):
+def apply_float_colormap(
+    image: Float[Tensor, "*bs 1"], colormap: Colormaps = "viridis"
+):
     """Convert single channel to a color image.
 
     Args:
@@ -110,7 +114,9 @@ def apply_float_colormap(image: Float[Tensor, "*bs 1"], colormap: Colormaps = "v
     image_long_max = torch.max(image_long)
     assert image_long_min >= 0, f"the min value is {image_long_min}"
     assert image_long_max <= 255, f"the max value is {image_long_max}"
-    return torch.tensor(matplotlib.colormaps[colormap].colors, device=image.device)[image_long[..., 0]]
+    return torch.tensor(matplotlib.colormaps[colormap].colors, device=image.device)[
+        image_long[..., 0]
+    ]
 
 
 def apply_depth_colormap(
@@ -150,8 +156,8 @@ def apply_depth_colormap(
 
 def apply_boolean_colormap(
     image: Bool[Tensor, "*bs 1"],
-    true_color = WHITE,
-    false_color = BLACK,
+    true_color=WHITE,
+    false_color=BLACK,
 ):
     """Converts a depth image to color for easier analysis.
 

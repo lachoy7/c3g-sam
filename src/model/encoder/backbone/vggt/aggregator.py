@@ -69,10 +69,14 @@ class Aggregator(nn.Module):
     ):
         super().__init__()
 
-        self.__build_patch_embed__(patch_embed, img_size, patch_size, num_register_tokens, embed_dim=embed_dim)
+        self.__build_patch_embed__(
+            patch_embed, img_size, patch_size, num_register_tokens, embed_dim=embed_dim
+        )
 
         # Initialize rotary position embedding if frequency > 0
-        self.rope = RotaryPositionEmbedding2D(frequency=rope_freq) if rope_freq > 0 else None
+        self.rope = (
+            RotaryPositionEmbedding2D(frequency=rope_freq) if rope_freq > 0 else None
+        )
         self.position_getter = PositionGetter() if self.rope is not None else None
 
         self.frame_blocks = nn.ModuleList(
@@ -117,14 +121,18 @@ class Aggregator(nn.Module):
 
         # Validate that depth is divisible by aa_block_size
         if self.depth % self.aa_block_size != 0:
-            raise ValueError(f"depth ({depth}) must be divisible by aa_block_size ({aa_block_size})")
+            raise ValueError(
+                f"depth ({depth}) must be divisible by aa_block_size ({aa_block_size})"
+            )
 
         self.aa_block_num = self.depth // self.aa_block_size
 
         # Note: We have two camera tokens, one for the first frame and one for the rest
         # The same applies for register tokens
         self.camera_token = nn.Parameter(torch.randn(1, 2, 1, embed_dim))
-        self.register_token = nn.Parameter(torch.randn(1, 2, num_register_tokens, embed_dim))
+        self.register_token = nn.Parameter(
+            torch.randn(1, 2, num_register_tokens, embed_dim)
+        )
 
         # The patch tokens start after the camera and register tokens
         self.patch_start_idx = 1 + num_register_tokens
@@ -134,8 +142,13 @@ class Aggregator(nn.Module):
         nn.init.normal_(self.register_token, std=1e-6)
 
         # Register normalization constants as buffers
-        for name, value in (("_resnet_mean", _RESNET_MEAN), ("_resnet_std", _RESNET_STD)):
-            self.register_buffer(name, torch.FloatTensor(value).view(1, 1, 3, 1, 1), persistent=False)
+        for name, value in (
+            ("_resnet_mean", _RESNET_MEAN),
+            ("_resnet_std", _RESNET_STD),
+        ):
+            self.register_buffer(
+                name, torch.FloatTensor(value).view(1, 1, 3, 1, 1), persistent=False
+            )
 
     def __build_patch_embed__(
         self,
@@ -155,7 +168,12 @@ class Aggregator(nn.Module):
         """
 
         if "conv" in patch_embed:
-            self.patch_embed = PatchEmbed(img_size=img_size, patch_size=patch_size, in_chans=3, embed_dim=embed_dim)
+            self.patch_embed = PatchEmbed(
+                img_size=img_size,
+                patch_size=patch_size,
+                in_chans=3,
+                embed_dim=embed_dim,
+            )
         else:
             vit_models = {
                 "dinov2_vitl14_reg": vit_large,
@@ -215,13 +233,19 @@ class Aggregator(nn.Module):
 
         pos = None
         if self.rope is not None:
-            pos = self.position_getter(B * S, H // self.patch_size, W // self.patch_size, device=images.device)
+            pos = self.position_getter(
+                B * S, H // self.patch_size, W // self.patch_size, device=images.device
+            )
 
         if self.patch_start_idx > 0:
             # do not use position embedding for special tokens (camera and register tokens)
             # so set pos to 0 for the special tokens
             pos = pos + 1
-            pos_special = torch.zeros(B * S, self.patch_start_idx, 2).to(images.device).to(pos.dtype)
+            pos_special = (
+                torch.zeros(B * S, self.patch_start_idx, 2)
+                .to(images.device)
+                .to(pos.dtype)
+            )
             pos = torch.cat([pos_special, pos], dim=1)
 
         # update P because we added special tokens
@@ -234,19 +258,25 @@ class Aggregator(nn.Module):
         for _ in range(self.aa_block_num):
             for attn_type in self.aa_order:
                 if attn_type == "frame":
-                    tokens, frame_idx, frame_intermediates = self._process_frame_attention(
-                        tokens, B, S, P, C, frame_idx, pos=pos
+                    tokens, frame_idx, frame_intermediates = (
+                        self._process_frame_attention(
+                            tokens, B, S, P, C, frame_idx, pos=pos
+                        )
                     )
                 elif attn_type == "global":
-                    tokens, global_idx, global_intermediates = self._process_global_attention(
-                        tokens, B, S, P, C, global_idx, pos=pos
+                    tokens, global_idx, global_intermediates = (
+                        self._process_global_attention(
+                            tokens, B, S, P, C, global_idx, pos=pos
+                        )
                     )
                 else:
                     raise ValueError(f"Unknown attention type: {attn_type}")
 
             for i in range(len(frame_intermediates)):
                 # concat frame and global intermediates, [B x S x P x 2C]
-                concat_inter = torch.cat([frame_intermediates[i], global_intermediates[i]], dim=-1)
+                concat_inter = torch.cat(
+                    [frame_intermediates[i], global_intermediates[i]], dim=-1
+                )
                 output_list.append(concat_inter)
 
         del concat_inter

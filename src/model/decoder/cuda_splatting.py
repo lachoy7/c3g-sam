@@ -19,6 +19,13 @@ from torch import Tensor
 from ...geometry.projection import get_fov, homogenize_points
 
 
+def _cuda_raster_float32(tensor: Tensor | None) -> Tensor | None:
+    """Custom rasterizer CUDA kernels only support fp32 inputs."""
+    if tensor is None:
+        return None
+    return tensor.float() if tensor.is_floating_point() else tensor
+
+
 def get_projection_matrix(
     near: Float[Tensor, " batch"],
     far: Float[Tensor, " batch"],
@@ -66,8 +73,12 @@ def render_cuda(
     cam_rot_delta: Float[Tensor, "batch 3"] | None = None,
     cam_trans_delta: Float[Tensor, "batch 3"] | None = None,
     low_pass_filter: float = 0.3,
-    feature_detach: bool = False
-) -> tuple[Float[Tensor, "batch 3 height width"], Float[Tensor, "batch height width"], Float[Tensor, "batch out_feature_dim height width"] | None]:
+    feature_detach: bool = False,
+) -> tuple[
+    Float[Tensor, "batch 3 height width"],
+    Float[Tensor, "batch height width"],
+    Float[Tensor, "batch out_feature_dim height width"] | None,
+]:
     assert use_sh or gaussian_sh_coefficients.shape[-1] == 1
 
     # Make sure everything is in a range where numerical issues don't appear.
@@ -83,6 +94,22 @@ def render_cuda(
     _, _, _, n = gaussian_sh_coefficients.shape
     degree = isqrt(n) - 1
     shs = rearrange(gaussian_sh_coefficients, "b g xyz n -> b g n xyz").contiguous()
+
+    # bf16 autocast upstream is fine; CUDA rasterizer requires fp32.
+    extrinsics = _cuda_raster_float32(extrinsics)
+    intrinsics = _cuda_raster_float32(intrinsics)
+    near = _cuda_raster_float32(near)
+    far = _cuda_raster_float32(far)
+    background_color = _cuda_raster_float32(background_color)
+    gaussian_means = _cuda_raster_float32(gaussian_means)
+    gaussian_covariances = _cuda_raster_float32(gaussian_covariances)
+    shs = _cuda_raster_float32(shs)
+    gaussian_opacities = _cuda_raster_float32(gaussian_opacities)
+    gaussian_features = _cuda_raster_float32(gaussian_features)
+    if cam_rot_delta is not None:
+        cam_rot_delta = _cuda_raster_float32(cam_rot_delta)
+    if cam_trans_delta is not None:
+        cam_trans_delta = _cuda_raster_float32(cam_trans_delta)
 
     b, _, _ = extrinsics.shape
     h, w = image_shape
@@ -107,8 +134,8 @@ def render_cuda(
             mean_gradients.retain_grad()
         except Exception:
             pass
-        
-        if gaussian_features is None:    
+
+        if gaussian_features is None:
             settings = GaussianRasterizationSettings(
                 image_height=h,
                 image_width=w,
@@ -123,26 +150,27 @@ def render_cuda(
                 campos=extrinsics[i, :3, 3],
                 prefiltered=False,  # This matches the original usage.
                 debug=False,
-                low_pass = low_pass_filter,
+                low_pass=low_pass_filter,
             )
             rasterizer = GaussianRasterizer(settings)
 
             row, col = torch.triu_indices(3, 3)
 
-            image, radii, depth, opacity, n_touched = rasterizer(
-                means3D=gaussian_means[i],
-                means2D=mean_gradients,
-                shs=shs[i] if use_sh else None,
-                colors_precomp=None if use_sh else shs[i, :, 0, :],
-                opacities=gaussian_opacities[i, ..., None],
-                cov3D_precomp=gaussian_covariances[i, :, row, col],
-                theta=cam_rot_delta[i] if cam_rot_delta is not None else None,
-                rho=cam_trans_delta[i] if cam_trans_delta is not None else None,
-            )
+            with torch.autocast(device_type="cuda", enabled=False):
+                image, radii, depth, opacity, n_touched = rasterizer(
+                    means3D=gaussian_means[i],
+                    means2D=mean_gradients,
+                    shs=shs[i] if use_sh else None,
+                    colors_precomp=None if use_sh else shs[i, :, 0, :],
+                    opacities=gaussian_opacities[i, ..., None],
+                    cov3D_precomp=gaussian_covariances[i, :, row, col],
+                    theta=cam_rot_delta[i] if cam_rot_delta is not None else None,
+                    rho=cam_trans_delta[i] if cam_trans_delta is not None else None,
+                )
             all_images.append(image)
             all_radii.append(radii)
             all_depths.append(depth.squeeze(0))
-            
+
             feature = None
         else:
             settings = FeatureDetachGaussianRasterizationSettings(
@@ -159,29 +187,44 @@ def render_cuda(
                 campos=extrinsics[i, :3, 3],
                 prefiltered=False,  # This matches the original usage.
                 debug=False,
-                low_pass = low_pass_filter,
+                low_pass=low_pass_filter,
             )
             rasterizer = FeatureDetachGaussianRasterizer(settings)
 
             row, col = torch.triu_indices(3, 3)
 
-            image, features, radii, depth, opacity, n_touched = rasterizer(
-                means3D=gaussian_means[i],
-                means2D=mean_gradients,
-                shs=shs[i] if use_sh else None,
-                semantic_feature = gaussian_features[i],
-                colors_precomp=None if use_sh else shs[i, :, 0, :],
-                opacities=gaussian_opacities[i, ..., None],
-                cov3D_precomp=gaussian_covariances[i, :, row, col],
-                theta=cam_rot_delta[i] if cam_rot_delta is not None else None,
-                rho=cam_trans_delta[i] if cam_trans_delta is not None else None,
+            means3D_feat = (
+                gaussian_means[i].detach() if feature_detach else gaussian_means[i]
             )
+            cov3D_feat = (
+                gaussian_covariances[i, :, row, col].detach()
+                if feature_detach
+                else gaussian_covariances[i, :, row, col]
+            )
+            opacities_feat = (
+                gaussian_opacities[i, ..., None].detach()
+                if feature_detach
+                else gaussian_opacities[i, ..., None]
+            )
+
+            with torch.autocast(device_type="cuda", enabled=False):
+                image, features, radii, depth, opacity, n_touched = rasterizer(
+                    means3D=means3D_feat,
+                    means2D=mean_gradients,
+                    shs=shs[i] if use_sh else None,
+                    semantic_feature=gaussian_features[i],
+                    colors_precomp=None if use_sh else shs[i, :, 0, :],
+                    opacities=opacities_feat,
+                    cov3D_precomp=cov3D_feat,
+                    theta=cam_rot_delta[i] if cam_rot_delta is not None else None,
+                    rho=cam_trans_delta[i] if cam_trans_delta is not None else None,
+                )
             all_images.append(image)
             all_radii.append(radii)
             all_depths.append(depth.squeeze(0))
             all_features.append(features)
             feature = torch.stack(all_features)
-                        
+
     return torch.stack(all_images), torch.stack(all_depths), feature
 
 
@@ -200,7 +243,7 @@ def render_cuda_orthographic(
     fov_degrees: float = 0.1,
     use_sh: bool = True,
     dump: dict | None = None,
-    low_pass_filter = 0.3
+    low_pass_filter=0.3,
 ) -> Float[Tensor, "batch 3 height width"]:
     b, _, _ = extrinsics.shape
     h, w = image_shape
@@ -209,6 +252,15 @@ def render_cuda_orthographic(
     _, _, _, n = gaussian_sh_coefficients.shape
     degree = isqrt(n) - 1
     shs = rearrange(gaussian_sh_coefficients, "b g xyz n -> b g n xyz").contiguous()
+
+    extrinsics = _cuda_raster_float32(extrinsics)
+    near = _cuda_raster_float32(near)
+    far = _cuda_raster_float32(far)
+    background_color = _cuda_raster_float32(background_color)
+    gaussian_means = _cuda_raster_float32(gaussian_means)
+    gaussian_covariances = _cuda_raster_float32(gaussian_covariances)
+    shs = _cuda_raster_float32(shs)
+    gaussian_opacities = _cuda_raster_float32(gaussian_opacities)
 
     # Create fake "orthographic" projection by moving the camera back and picking a
     # small field of view.
@@ -268,14 +320,15 @@ def render_cuda_orthographic(
 
         row, col = torch.triu_indices(3, 3)
 
-        image, radii, depth, opacity, n_touched = rasterizer(
-            means3D=gaussian_means[i],
-            means2D=mean_gradients,
-            shs=shs[i] if use_sh else None,
-            colors_precomp=None if use_sh else shs[i, :, 0, :],
-            opacities=gaussian_opacities[i, ..., None],
-            cov3D_precomp=gaussian_covariances[i, :, row, col],
-        )
+        with torch.autocast(device_type="cuda", enabled=False):
+            image, radii, depth, opacity, n_touched = rasterizer(
+                means3D=gaussian_means[i],
+                means2D=mean_gradients,
+                shs=shs[i] if use_sh else None,
+                colors_precomp=None if use_sh else shs[i, :, 0, :],
+                opacities=gaussian_opacities[i, ..., None],
+                cov3D_precomp=gaussian_covariances[i, :, row, col],
+            )
         all_images.append(image)
         all_radii.append(radii)
     return torch.stack(all_images)

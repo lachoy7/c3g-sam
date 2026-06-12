@@ -1,190 +1,235 @@
-<p align="center">
-  <h1 align="center">C3G: Learning Compact 3D Representations <br> with 2K Gaussians</h1>
-  <p align="center">
-    <a href="https://hg010303.github.io/">Honggyu An</a><sup>1*</sup>
-    ·
-    <a href="https://crepejung00.github.io/">Jaewoo Jung</a><sup>1*</sup>
-    ·
-    <a href="">Mungyeom Kim</a><sup>1</sup>
-    .
-    <a href="https://kchyun.github.io/">Chaehyun Kim</a><sup>1</sup>
-    ·
-    <a href="https://sites.google.com/view/minjeon/home">Minkyeong Jeon</a><sup>1</sup>
-    ·
-    <a href="https://onground.github.io/">Jisang Han</a><sup>1</sup>
-    ·
-    <a href="">Kazumi Fukuda</a><sup>3</sup>
-    ·
-    <a href="">Takuya Narihira</a><sup>3†</sup>
-    .
-    <a href="">Hyuna Ko</a><sup>1</sup>
-    .
-    <a href="">Junsu Kim</a><sup>1</sup>
-    .
-    <a href="https://sunghwanhong.github.io/">Sunghwan Hong</a><sup>2†</sup>
-    ·
-    <a href="https://www.yukimitsufuji.com/">Yuki Mitsfuji</a><sup>3,4†</sup>
-    .
-    <a href="https://cvlab.kaist.ac.kr/members/faculty">Seungryong Kim</a><sup>1†</sup>
-  </p>
-  <h4 align="center"><sup>1</sup>KAIST AI, <sup>2</sup>ETH AI Center, ETH Zurich, <sup>3</sup>SONY AI, <sup>4</sup>Sony Group Corporation</h4>
+# C3G-SAM
 
-  <p align='center'><sup>*</sup>Co-first author, †Co-advising author</p>
+Compact 3D Gaussians with SAM ViT-H feature distillation and prompted segmentation
 
-  <h3 align="center">CVPR 2026</h3>
-  <h3 align="center"><a href="https://arxiv.org/abs/2512.04021">Paper</a> | <a href="https://cvlab-kaist.github.io/C3G">Project Page</a></h3>
-  <div align="center"></div>
-</p>
+> **C3G-SAM** extends [C3G: Learning Compact 3D Representations with 2K Gaussians](https://arxiv.org/abs/2512.04021) (CVPR 2026) with [Segment Anything (SAM)](https://github.com/facebookresearch/segment-anything) integration. Multi-view context images pass through a **VGGT encoder** and an **Instill Transformer** with separate **Geometry** and **Feature** streams to produce 2048 3D Gaussians. Rendered Gaussian features are either matched to precomputed SAM encoder outputs (distillation) or decoded into segmentation masks via a frozen **SAM mask decoder** (prompted training).
 
-<p align="center">
-  <a href="">
-    <img src="assets/teaser.jpg" alt="Logo" width="100%">
-  </a>
-</p>
+**Every major workflow runs locally or on [Modal](https://modal.com)** — precompute, training (distillation and prompted), mask export, scoring, ablations, and figure generation. Modal apps live under [`src/modal/`](src/modal/); use [`scripts/run_modal.sh`](scripts/run_modal.sh) or `python -m src.main --modal …` without changing Hydra configs. See [docs/12-c3g-sam.md](docs/12-c3g-sam.md) for volumes and checkpoints.
 
-> We propose a feed-forward framework for learning 
-<b>compact 3D representations</b> from unposed images. 
-Our approach estimates only <b>2K Gaussians</b> that allocated in meaningful regions 
-to enable generalizable scene reconstruction and understanding. 
+This repository is a fork of the upstream [C3G codebase](https://github.com/cvlab-kaist/C3G). We gratefully acknowledge the original authors:
 
-### 🚀 What to Expect
-- [x]  Pretrained weights. <br>
-- [ ] Preprocessed version of Replica dataset. <br>
-- [ ] Multi-view novel view synthesis evaluation code. <br>
-- [ ] Probe3d evaluation code.
+[Honggyu An](https://hg010303.github.io/) · [Jaewoo Jung](https://crepejung00.github.io/) · Mungyeom Kim · [Chaehyun Kim](https://kchyun.github.io/) · [Minkyeong Jeon](https://sites.google.com/view/minjeon/home) · [Jisang Han](https://onground.github.io/) · Kazumi Fukuda · Takuya Narihira · Hyuna Ko · Junsu Kim · [Sunghwan Hong](https://sunghwanhong.github.io/) · [Yuki Mitsfuji](https://www.yukimitsufuji.com/) · [Seungryong Kim](https://cvlab.kaist.ac.kr/members/faculty)
+
+[C3G Paper](https://arxiv.org/abs/2512.04021) · [C3G Project Page](https://cvlab-kaist.github.io/C3G) · Full documentation
+
+---
+
+## Architecture
+
+The diagram above shows the full C3G-SAM pipeline:
+
+
+| Component                         | Role                                                                                                      |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| **Context images**                | Multi-view RGB input (224×224 at train time)                                                              |
+| **Gaussian tokens (×2048)**       | Learnable slots that become 3D Gaussians                                                                  |
+| **VGGT encoder**                  | Patch tokens for geometry; drives the Geometry stream                                                     |
+| **SAM encoder** *(purple)*        | ViT-H image encoder — produces 256-d patch features for the Feature stream                                |
+| **Instill Transformer**           | Dual-stream cross-attention: **Geometry stream** (3D layout + RGB) and **Feature stream** (SAM semantics) |
+| **Gaussian decoder + rasterizer** | Differentiable splatting → rendered RGB and feature maps                                                  |
+| **SAM decoder** *(purple)*        | Frozen mask decoder — turns rendered features + point prompts into masks                                  |
+| **Target mask**                   | Per-class segmentation output at the target view                                                          |
+
+
+Shared Q/K attention couples the two Instill streams so each Gaussian slot aligns with the corresponding image region's SAM embedding. See [docs/arch-details.md](docs/arch-details.md) for tensor shapes and config tables.
+
+---
+
+## Training formulations
+
+C3G-SAM supports two training modes. They differ in **what is frozen**, **what supervision is used**, and **whether SAM runs live** during training.
+
+### Form 1 — Feature distillation
+
+Offline SAM ViT-H encoder features (`{frame_id}_sam.pt`, 256×64×64) are precomputed once. At train time SAM is **not loaded** — the model learns to reproduce encoder features via Gaussian splatting.
+
+
+|                   |                                                                                                                                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **What's frozen** | Only the **V projection head** (`to_anotherv`) in the Feature stream of the Instill Transformer. Q/K, the Geometry stream, VGGT backbone, Gaussian decoder, and feature output heads remain trainable. |
+| **Losses**        | Cosine similarity + feature magnitude MSE between rendered Gaussian features and precomputed SAM features                                                                                              |
+| **Hydra preset**  | `+training=feature_head_sam_precomputed`                                                                                                                                                               |
+| **Modal**         | `modal run src/modal/train.py --wait`                                                                                                                                                                  |
+
+
+```bash
+# Precompute (required once)
+uv run python scripts/precompute_sam_features.py \
+    --dataset-root ./datasets/scannet --dataset scannet \
+    --sam-checkpoint ./pretrained_weights/sam_vit_h.pth
+
+# Train
+uv run python -m src.main +training=feature_head_sam_precomputed \
+    dataset.scannet_distill.roots=[./datasets/scannet] \
+    dataset.scannet_distill.sam_features_root=./datasets/scannet \
+    model.encoder.pretrained_weights=./pretrained_weights/gaussian_decoder.ckpt
+```
+
+### Form 2 — Prompted segmentation
+
+The full C3G pipeline is trained end-to-end with **point prompts** sampled from GT semantic labels and supervision through the frozen SAM mask decoder.
+
+
+|                          |                                                                                                                                                                                                               |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **What's frozen**        | **SAM encoder** and **SAM mask decoder** only (purple blocks in the diagram). The entire C3G pipeline — VGGT encoder, Instill Transformer (both streams), Gaussian decoder, and rasterizer — is **unfrozen**. |
+| **Losses**               | Prompted BCE + Dice on segmentation masks, plus RGB MSE and LPIPS reconstruction                                                                                                                              |
+| **Hydra preset**         | `+training=feature_head_sam_prompted_scannet` (ScanNet) or `+training=feature_head_sam_prompted` + `replica_2dseg` (Replica)                                                                                  |
+| **Modal**                | `modal run src/modal/train.py --experiment prompted --wait`                                                                                                                                                   |
+| **Checkpoint selection** | Best `**val/loss`**, not IoU                                                                                                                                                                                  |
+
+
+```bash
+uv run python -m src.main +training=feature_head_sam_prompted \
+    +dataset@_group_.replica_2dseg=replica_2dseg \
+    dataset.replica_2dseg.roots=[./datasets/replica] \
+    train.sam_checkpoint=./pretrained_weights/sam_vit_h.pth \
+    model.encoder.pretrained_weights=./pretrained_weights/gaussian_decoder.ckpt
+```
+
+
+|                   | Form 1 — Distillation                          | Form 2 — Prompted              |
+| ----------------- | ---------------------------------------------- | ------------------------------ |
+| SAM at train time | No (precomputed `.pt` files)                   | Yes (frozen encoder + decoder) |
+| C3G pipeline      | Mostly trainable; Feature-stream V proj frozen | Fully trainable                |
+| Supervision       | Dense encoder features                         | Segmentation masks via prompts |
+| Primary losses    | Cosine + magnitude MSE                         | BCE + Dice + RGB MSE + LPIPS   |
+
+
+Detailed guides: [distillation_training.md](docs/distillation_training.md) · [prompted_training.md](docs/prompted_training.md) · [prompted_training_modal.md](docs/prompted_training_modal.md)
+
+---
 
 ## Installation
 
-Our code is developed based on pytorch 2.5.1, CUDA 12.4 and python 3.11. 
-
-We recommend using [conda](https://docs.anaconda.com/miniconda/) for installation:
+Python 3.11+, PyTorch 2.5.1, CUDA 12.4.
 
 ```bash
-conda create -n c3g python=3.11
-conda activate c3g
-
-pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
-pip install -r requirements.txt
+uv sync --frozen
+source .venv/bin/activate
 ```
 
-Then, you should download VGGT pretrained weights from [VGGT](https://github.com/facebookresearch/vggt/tree/main). Create a folder named `pretrained_weights` and save the file as `model.pt`.
+Install [uv](https://docs.astral.sh/uv/) if needed: `curl -LsSf https://astral.sh/uv/install.sh | sh`
 
-Here is an example:
+Before building the feature rasterizer, set `NUM_SEMANTIC_CHANNELS=256` in `submodules/diff_gaussian_rasterization_w_feature_detach/cuda_rasterizer/config.h`, then:
+
+```bash
+uv pip install -e submodules/diff_gaussian_rasterization_w_feature_detach
 ```
+
+### Weights
+
+```bash
 mkdir -p pretrained_weights
-wget https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt?download=true -O ./pretrained_weights/model.pt
+wget https://huggingface.co/facebook/VGGT-1B/resolve/main/model.pt -O ./pretrained_weights/model.pt
+wget https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth -O ./pretrained_weights/sam_vit_h.pth
+# C3G Gaussian decoder init → pretrained_weights/gaussian_decoder.ckpt
+# (from https://huggingface.co/honggyuAn/C3G or your own checkpoint)
 ```
 
+### Datasets
 
-
-For LSeg feature lifting, you should download LSeg pretrained weights.
-```
-gdown 1FTuHY1xPUkM-5gaDtMfgCl3D0gR89WV7 -O ./pretrained_weights/demo_e200.ckpt
-```
-
-## Data Preparation
-For training and multi-view novel view synthesis evaluation, we use the preprocessed [RealEstate10K](https://google.github.io/realestate10k/index.html) dataset following  [pixelSplat](https://github.com/dcharatan/pixelsplat) and [MVSplat](https://github.com/donydchen/mvsplat).
-
-For 3D scene understanding evaluation, we use [ScanNet](http://www.scan-net.org/) following [LSM](https://github.com/NVlabs/LSM/blob/main/data_process/data.md) and use [Replica](https://github.com/facebookresearch/Replica-Dataset), which we follow preprocessing and evaluation protocol of [Feature 3DGS](https://github.com/ShijieZhou-UCLA/feature-3dgs).
-
-## Pretrained Weights
-Our pretrained checkpoints are available on [Hugging Face](https://huggingface.co/honggyuAn/C3G/tree/main).
-
-* `gaussian_decoder.ckpt`: Gaussian Decoder trained for 2-view input.
-
-* `gaussian_decoder_multiview.ckpt`: Gaussian Decoder trained for multi-view input.
-
-* `feature_decoder_lseg.ckpt`: Feature Decoder trained with the LSeg model.
-
-* `feature_decoder_dinov3L.ckpt`: Feature Decoder trained with the DINOv3-L model.
-
-* `feature_decoder_dinov2.ckpt`: Feature Decoder trained with the DINOv2-L model.
-
-## Training
-### Gaussian Decoder Training
-To train the Gaussian Decoder, you can run the following commands.
-
-To train the Gaussian Decoder:
-```bash
-python -m src.main +training=gaussian_head wandb.mode=online wandb.name="wandb_name"
-```
-To train the Gaussian Decoder when multi-view is available:
-```bash
-python -m src.main +training=gaussian_head_multiview wandb.mode=online wandb.name="wandb_name"
-```
-To train the Gaussian Decoder faster when multi-view is available, you can continue from the 2-view training settings:
-```bash
-python -m src.main +training=gaussian_head wandb.mode=online wandb.name="wandb_name" checkpointing.load="2view_checkpoint" model.decoder.low_pass_filter=0.3
-```
-If you do not want to log to wandb, just set `wandb.mode=disabled`
-
-### Feature Decoder Training
-To train Feature Decoder, you can run the following commands.
-> [!IMPORTANT]
-> **Update the CUDA Rasterizer**
-> When you change the model, you must update `NUM_SEMANTIC_CHANNELS` in the config file.
->
-> **File:** `./submodules/diff_gaussian_rasterization_w_feature_detach/cuda_rasterizer/config.h`
->
-> **Values:**
-> * 512 for LSeg
-> * 768 for DINOv2-base
-> * 1024 for DINOv2-large / DINOv3-large
-> * 128 for VGGT-tracking
-<!-- <b>IMPORTANT:</b> When you change the model, you should change the cuda rasterizer. You should change the `NUM_SEMANTIC_CHANNELS` in `./submodules/diff_gaussian_rasterization_w_feature_detach/cuda_rasterizer/config.h` with each feature extractor's feature dimension. <br>
-(e.g., 512 for LSeg, 768 for DINOv2-base, 1024 for DINOv2-large, DINOv3-large, or 128 for VGGT-tracking) -->
-
-
-To train the Feature Decoder with various VFM models (We tested LSeg, DINOv2-base, DINOv2-large, DINOv3-large, and VGGT-Tracking):
-```bash
-## for LSeg
-python -m src.main +training=feature_head_lseg wandb.mode=online wandb.name="wandb_name" model.encoder.pretrained_weights="2view_checkpoint"
-
-## for DINOv2-base
-python -m src.main +training=feature_head_dinov2_B wandb.mode=online wandb.name="wandb_name" model.encoder.pretrained_weights="2view_checkpoint"
-
-## for DINOv2-large
-python -m src.main +training=feature_head_dinov2_L wandb.mode=online wandb.name="wandb_name" model.encoder.pretrained_weights="2view_checkpoint"
-
-## for DINOv3-large
-python -m src.main +training=feature_head_dinov3_L wandb.mode=online wandb.name="wandb_name" model.encoder.pretrained_weights="2view_checkpoint"
-
-## for VGGT-tracking
-python -m src.main +training=feature_head_vggt wandb.mode=online wandb.name="wandb_name" model.encoder.pretrained_weights="2view_checkpoint"
-```
-If you do not want to log to wandb, just set `wandb.mode=disabled`
-
-This is an example of training the Feature Decoder when multi-view input is available:
-```bash
-## for LSeg
-python -m src.main +training=feature_head_lseg_multiview wandb.mode=online wandb.name="wandb_name" model.encoder.pretrained_weights="multiview_checkpoint"
-```
-
-## Evaluation
-
-Evaluation code of novel view synthesis on RealEstate10K dataset when only 2 view is available.
-```bash
-python -m src.main +evaluation=re10k mode=test dataset/view_sampler@dataset.re10k.view_sampler=evaluation dataset.re10k.view_sampler.index_path=assets/evaluation_index_re10k.json test.save_compare=true wandb.mode=online checkpointing.load="checkpoint_path" wandb.name="wandb_name" 
-```
-
-Evaluation code of novel view synthesis on the RealEstate10K dataset when multi-view is available.
+Replica and ScanNet use a flat per-scene layout (`{frame_id}_x.jpg`, `{frame_id}_y.png`, `{frame_id}_cam.npz`):
 
 ```bash
-python -m src.main +evaluation=re10k_multiview mode=test dataset/view_sampler@dataset.re10k.view_sampler=evaluation dataset.re10k.view_sampler.index_path=assets/evaluation_index_re10k.json test.save_compare=true wandb.mode=online checkpointing.load="checkpoint_path" wandb.name="wandb_name" 
+python -m src.dataset.download_replica --source /path/to/raw/replica --out-dir ./datasets/replica
+python -m src.dataset.download_scannet --out-dir ./datasets/scannet --accept-tos
 ```
 
-Evaluation code of 3D scene understanding on the ScanNet dataset.
+ScanNet splits: 775 train / 8 val / 24 test (`assets/scannet_2dseg_scene_splits.json`).
+
+---
+
+## Modal (cloud GPUs)
+
+This repo is built for **local development and Modal production runs** with the same Hydra presets and eval pipeline.
+
+1. **Install Modal** (once): `pip install modal && modal setup`
+2. **Populate volumes** — datasets (`replica`, `scannet`), weights (`c3g-weights`), and optional precomputed SAM features. Details in [docs/12-c3g-sam.md](docs/12-c3g-sam.md).
+3. **Run jobs** — any of:
 
 ```bash
-python -m src.main +evaluation=scannet wandb.mode=online mode=test test.save_compare=true test.pose_align_steps=1000 checkpointing.load="checkpoint_path" wandb.name="wandb_name" 
+# Shell wrappers (recommended)
+scripts/run_modal.sh train-distill --wait
+scripts/run_modal.sh train-prompted --wait
+scripts/run_modal.sh precompute --dataset scannet --wait
+scripts/run_modal.sh eval-c3gsam --wait
+scripts/run_modal.sh eval-ablation c3gsam_ema-mag-uproj --wait
+scripts/run_modal.sh score --experiment c3gsam --wait
+
+# Or via main.py
+python -m src.main --modal train --experiment distillation --wait
+python -m src.main --modal score --experiment c3gsam --wait
+
+# Or direct Modal entrypoints
+modal run src/modal/train.py --wait
+modal run src/modal/eval_masks.py::c3g --wait
+modal run src/modal/get_scores.py --experiment c3gsam --wait
 ```
-If you do not want to log to wandb, just set `wandb.mode=disabled`
+
+Training checkpoints are written to the **`c3g-train-outputs`** volume at `/outputs/runs/<wandb.name>/checkpoints/`. Modal jobs detach by default; pass `--wait` (or set `C3G_MODAL_WAIT=1` in the shell scripts) to block until completion.
+
+For a full local vs Modal command matrix, see **Entry points** below and [docs/prompted_training_modal.md](docs/prompted_training_modal.md).
+
+---
+
+## Entry points
+
+Local and Modal commands are paired below. Prefer **`scripts/run_local.sh`** / **`scripts/run_modal.sh`** for the full train → eval → score workflow.
+| Task                        | Local                                            | Modal                                                   |
+| --------------------------- | ------------------------------------------------ | ------------------------------------------------------- |
+| Precompute SAM features     | `scripts/run_local.sh precompute`                | `scripts/run_modal.sh precompute --wait`                |
+| Train Form 1 (distillation) | `scripts/run_local.sh train-distill`             | `scripts/run_modal.sh train-distill --wait`             |
+| Train Form 2 (prompted)     | `scripts/run_local.sh train-prompted`            | `scripts/run_modal.sh train-prompted --wait`            |
+| Smoke test (1 step)         | add `--smoke` to train commands above            | add `--smoke` to train commands above                   |
+| Export masks (SAM / C3G)    | `scripts/run_local.sh eval-sam` / `eval-c3gsam`  | `scripts/run_modal.sh eval-sam` / `eval-c3gsam --wait`  |
+| Score masks                 | `scripts/run_local.sh score --experiment c3gsam` | `scripts/run_modal.sh score --experiment c3gsam --wait` |
+| Seg viz / loss plots        | `scripts/run_local.sh viz` / `loss-plots`        | `scripts/run_modal.sh viz --wait`                       |
 
 
+Modal via `main.py`: `python -m src.main --modal train --experiment distillation --wait` · Quick start: [Modal (cloud GPUs)](#modal-cloud-gpus) above.
+
+Full volume and ablation reference: [docs/12-c3g-sam.md](docs/12-c3g-sam.md).
+
+---
+
+## Evaluation & ablations
+
+Upload trained checkpoints to Modal volume `**c3g-weights`** before eval.
+
+
+| Method                      | Checkpoint on `c3g-weights`               | Export volume                    | Score                               |
+| --------------------------- | ----------------------------------------- | -------------------------------- | ----------------------------------- |
+| Vanilla SAM                 | `sam_vit_h.pth`                           | `vanilla-sam-outputs`            | `--experiment sam`                  |
+| C3G-SAM (main)              | `distillation-base.ckpt`                  | `c3g-sam-eval-outputs`           | `--experiment c3gsam`               |
+| C3G-SAM EMA + mag + up-proj | `distillation-diff_learnable_tokens.ckpt` | `c3g-sam-dft-eval-outputs`       | `--experiment c3gsam_ema-mag-uproj` |
+| C3G-SAM EMA (no mag head)   | `c3gsam-nomaghead.ckpt`                   | `c3g-sam-nomaghead-eval-outputs` | `--experiment c3gsam_ema`           |
+| C3G-SAM no EMA, no mag      | `ema-nomag.ckpt`                          | `c3g-sam-ema-nomag-eval-outputs` | `--experiment c3gsam_noema-nomag`   |
+
+
+Metrics: global pixel IoU, boundary IoU, and warp mIoU on Replica (8 scenes) + ScanNet test (24 scenes). Pre-generated figures: `[c3gsam_results/](c3gsam_results/)`.
+
+---
+
+## Documentation
+
+
+| Document                                     | Description                                         |
+| -------------------------------------------- | --------------------------------------------------- |
+| [docs/12-c3g-sam.md](docs/12-c3g-sam.md)     | Entry points, Modal volumes, checkpoints, ablations |
+| [docs/arch-details.md](docs/arch-details.md) | Shape-annotated architecture reference              |
+| [docs/README.md](docs/README.md)             | Full documentation index                            |
+
+
+For upstream C3G training (Gaussian decoder, LSeg/DINO feature heads, RE10K eval), see the [original C3G repository](https://github.com/cvlab-kaist/C3G).
+
+---
 
 ## Citation
 
-```
+If you use the upstream C3G framework, please cite:
+
+```bibtex
 @article{an2025c3g,
   title={C3G: Learning Compact 3D Representations with 2K Gaussians},
   author={An, Honggyu and Jung, Jaewoo and Kim, Mungyeom and Hong, Sunghwan and Kim, Chaehyun and Fukuda, Kazumi and Jeon, Minkyeong and Han, Jisang and Narihira, Takuya and Ko, Hyuna and others},
@@ -193,5 +238,6 @@ If you do not want to log to wandb, just set `wandb.mode=disabled`
 }
 ```
 
-## Acknowledgement
-We thank the authors of [VGGT](https://github.com/facebookresearch/vggt) and [NoPoSplat](https://github.com/cvg/NoPoSplat) for their excellent work and code, which served as the foundation for this project.
+## Acknowledgements
+
+This work builds on [C3G](https://arxiv.org/abs/2512.04021) by An et al. and integrates [Segment Anything (SAM)](https://github.com/facebookresearch/segment-anything) by Kirillov et al. We also thank the authors of [VGGT](https://github.com/facebookresearch/vggt) and [NoPoSplat](https://github.com/cvg/NoPoSplat), whose code forms the foundation of the upstream C3G project.

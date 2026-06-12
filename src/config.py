@@ -16,9 +16,13 @@ from .model.model_wrapper import OptimizerCfg, TestCfg, TrainCfg
 @dataclass
 class CheckpointingCfg:
     load: Optional[str]  # Not a path, since it could be something like wandb://...
-    every_n_train_steps: int
     save_top_k: int
     save_weights_only: bool
+    # When set, also save on this train-step interval. Omit/null for val-metric-only saves.
+    every_n_train_steps: Optional[int] = None
+    monitor: str = "info/global_step"
+    mode: Literal["min", "max"] = "max"
+    debug_log_interval: int = 50
 
 
 @dataclass
@@ -30,10 +34,28 @@ class ModelCfg:
 @dataclass
 class TrainerCfg:
     max_steps: int
+    # Optimizer steps between validation runs (int), or fraction of a train epoch (float).
     val_check_interval: int | float | None
     gradient_clip_val: int | float | None
     num_nodes: int = 1
     accumulate_grad_batches: int = 1
+    limit_test_batches: int | float | None = None
+    # How often Lightning flushes self.log metrics to W&B (optimizer steps).
+    log_every_n_steps: int = 10
+    # Lightning ``devices`` (e.g. 1 or "auto"). None keeps legacy "auto" + DDP behavior.
+    devices: int | str | None = None
+    # Set to 0 to skip sanity validation (useful on multi-GPU hosts).
+    num_sanity_val_steps: int | None = None
+
+
+def val_check_interval_in_training_batches(
+    val_check_interval: int | float | None,
+    accumulate_grad_batches: int,
+) -> int | float | None:
+    """Map config val_check_interval (optimizer steps) to Lightning training batches."""
+    if val_check_interval is None or not isinstance(val_check_interval, int):
+        return val_check_interval
+    return val_check_interval * accumulate_grad_batches
 
 
 @dataclass
@@ -100,6 +122,8 @@ def load_typed_root_config(cfg: DictConfig) -> RootCfg:
     return load_typed_config(
         cfg,
         RootCfg,
-        {list[LossCfgWrapper]: separate_loss_cfg_wrappers,
-         list[DatasetCfgWrapper]: separate_dataset_cfg_wrappers},
+        {
+            list[LossCfgWrapper]: separate_loss_cfg_wrappers,
+            list[DatasetCfgWrapper]: separate_dataset_cfg_wrappers,
+        },
     )

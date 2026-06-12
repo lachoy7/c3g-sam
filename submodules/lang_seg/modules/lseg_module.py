@@ -34,10 +34,10 @@ class LSegModule(LSegmentationModule):
             self.crop_size = 480
 
         use_pretrained = True
-        norm_mean= [0.5, 0.5, 0.5]
+        norm_mean = [0.5, 0.5, 0.5]
         norm_std = [0.5, 0.5, 0.5]
 
-        print('** Use norm {}, {} as the mean and std **'.format(norm_mean, norm_std))
+        print("** Use norm {}, {} as the mean and std **".format(norm_mean, norm_std))
 
         train_transform = [
             transforms.ToTensor(),
@@ -58,7 +58,7 @@ class LSegModule(LSegmentationModule):
             base_size=self.base_size,
             crop_size=self.crop_size,
         )
-        
+
         self.valset = self.get_valset(
             dataset,
             augment=kwargs["augment"],
@@ -71,7 +71,7 @@ class LSegModule(LSegmentationModule):
         )
         # print(kwargs)
 
-        labels = self.get_labels('ade20k')
+        labels = self.get_labels("ade20k")
 
         self.net = LSegNet(
             labels=labels,
@@ -96,18 +96,17 @@ class LSegModule(LSegmentationModule):
 
     def get_labels(self, dataset):
         labels = []
-        path = 'label_files/{}_objectInfo150.txt'.format(dataset)
-        assert os.path.exists(path), '*** Error : {} not exist !!!'.format(path)
-        f = open(path, 'r') 
-        lines = f.readlines()      
-        for line in lines: 
-            label = line.strip().split(',')[-1].split(';')[0]
+        path = "label_files/{}_objectInfo150.txt".format(dataset)
+        assert os.path.exists(path), "*** Error : {} not exist !!!".format(path)
+        f = open(path, "r")
+        lines = f.readlines()
+        for line in lines:
+            label = line.strip().split(",")[-1].split(";")[0]
             labels.append(label)
         f.close()
-        if dataset in ['ade20k']:
+        if dataset in ["ade20k"]:
             labels = labels[1:]
         return labels
-
 
     @staticmethod
     def add_model_specific_args(parent_parser):
@@ -175,7 +174,7 @@ class LSegModule(LSegmentationModule):
 
         parser.add_argument(
             "--activation",
-            choices=['lrelu', 'tanh'],
+            choices=["lrelu", "tanh"],
             default="lrelu",
             help="use which activation to activate the block",
         )

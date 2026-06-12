@@ -14,12 +14,20 @@ from .heads import DPTHead
 from ...geometry.projection import sample_image_grid
 from ..types import Gaussians
 from .backbone import Backbone, BackboneCfg, get_backbone
-from .common.gaussian_adapter import GaussianAdapter, GaussianAdapterCfg, UnifiedGaussianAdapter
+from .common.gaussian_adapter import (
+    GaussianAdapter,
+    GaussianAdapterCfg,
+    UnifiedGaussianAdapter,
+)
 from .encoder import Encoder
-from .common.gmae import Transformer, InstillTransformer
+from .common.gmae import (
+    Transformer,
+    InstillTransformer,
+    remap_instill_to_qkv_checkpoint,
+)
 from .backbone.croco.misc import fill_default_args, freeze_all_params
 
-inf = float('inf')
+inf = float("inf")
 
 
 @dataclass
@@ -35,6 +43,7 @@ def rearrange_head(feat, patch_size, H, W):
     feat = F.pixel_shuffle(feat, patch_size)  # B,D,H,W
     feat = rearrange(feat, "b d h w -> b (h w) d")
     return feat
+
 
 @dataclass
 class EncoderVGGTCfg:
@@ -54,12 +63,14 @@ class EncoderVGGTCfg:
     pretrained_weights: str = ""
     pose_free: bool = True
     freeze_backbone: bool = False
+    freeze_instill_qk: bool = False
+    freeze_geometry_head: bool = False
     decoder_depth: int = 2
     gaussians_per_token: int = 1
-    gaussian_feature_dim : int = 0
-    feature_dim: int = 0        ## don't setting it manually, it will be set in main.py
+    gaussian_feature_dim: int = 0
+    feature_dim: int = 0  ## don't setting it manually, it will be set in main.py
     different_learnable_tokens: bool = False
-    
+
 
 class EncoderVGGT(Encoder[EncoderVGGTCfg]):
     backbone: nn.Module
@@ -70,54 +81,91 @@ class EncoderVGGT(Encoder[EncoderVGGTCfg]):
 
         self.backbone = get_backbone(cfg.backbone, 3)
 
-        self.gaussian_adapter = UnifiedGaussianAdapter(cfg.gaussian_adapter) if self.cfg.pose_free else GaussianAdapter(cfg.gaussian_adapter)
+        self.gaussian_adapter = (
+            UnifiedGaussianAdapter(cfg.gaussian_adapter)
+            if self.cfg.pose_free
+            else GaussianAdapter(cfg.gaussian_adapter)
+        )
 
         self.patch_size = self.backbone.aggregator.patch_size
         self.raw_gs_dim = 3 + 1 + self.gaussian_adapter.d_in
 
-        self.dpt_head = DPTHead(2048) if 'vggt' in cfg.backbone.name else None
+        self.dpt_head = DPTHead(2048) if "vggt" in cfg.backbone.name else None
         freeze_all_params([self.dpt_head])
-        if hasattr(self.backbone, 'camera_head'):
-            del self.backbone.camera_head, self.backbone.point_head, self.backbone.depth_head, self.backbone.track_head
+        if hasattr(self.backbone, "camera_head"):
+            del (
+                self.backbone.camera_head,
+                self.backbone.point_head,
+                self.backbone.depth_head,
+                self.backbone.track_head,
+            )
 
         if cfg.freeze_backbone:
-            self.backbone.set_freeze('encoder')
-                    
+            self.backbone.set_freeze("encoder")
+
         transformer_dim = 2048
-        
-        self.gaussian_tokens = nn.Parameter(torch.randn(cfg.num_gaussians, transformer_dim))
-        self.anchor_positions = nn.Parameter(torch.tensor([[0,0,1]]).repeat(cfg.num_gaussians,1), requires_grad=False)      
-        
-        
+
+        self.gaussian_tokens = nn.Parameter(
+            torch.randn(cfg.num_gaussians, transformer_dim)
+        )
+        self.anchor_positions = nn.Parameter(
+            torch.tensor([[0, 0, 1]]).repeat(cfg.num_gaussians, 1), requires_grad=False
+        )
+
         if self.cfg.feature_dim > 0:
             self.gmae_decoder = InstillTransformer(
-                dim = transformer_dim,
-                depth = cfg.decoder_depth,
-                heads = 16,
-                dim_head = transformer_dim//16,
-                mlp_dim = transformer_dim * 2,
-                cfg = cfg,
+                dim=transformer_dim,
+                depth=cfg.decoder_depth,
+                heads=16,
+                dim_head=transformer_dim // 16,
+                mlp_dim=transformer_dim * 2,
+                cfg=cfg,
+                freeze_instill_qk=cfg.freeze_instill_qk,
             )
-            
+
             if self.cfg.different_learnable_tokens:
-                self.gaussian_tokens_feature = nn.Parameter(torch.randn(cfg.num_gaussians, self.cfg.feature_dim))
-                self.feature_gmae_to_gaussians = nn.Linear(self.cfg.feature_dim, self.cfg.gaussian_feature_dim * cfg.gaussians_per_token)
+                self.gaussian_tokens_feature = nn.Parameter(
+                    torch.randn(cfg.num_gaussians, self.cfg.feature_dim) * 0.02
+                )
+                self.feature_gmae_to_gaussians = nn.Linear(
+                    self.cfg.feature_dim,
+                    self.cfg.gaussian_feature_dim * cfg.gaussians_per_token,
+                )
+                self.magnitude_head = nn.Linear(self.cfg.feature_dim, 1)
             else:
-                self.feature_gmae_to_gaussians = nn.Linear(transformer_dim, self.cfg.gaussian_feature_dim * cfg.gaussians_per_token)
-            
+                self.feature_gmae_to_gaussians = nn.Linear(
+                    transformer_dim,
+                    self.cfg.gaussian_feature_dim * cfg.gaussians_per_token,
+                )
+                self.magnitude_head = nn.Linear(transformer_dim, 1)
+            nn.init.zeros_(self.magnitude_head.weight)
+            nn.init.constant_(
+                self.magnitude_head.bias, torch.log(torch.tensor(torch.e - 1)).item()
+            )
+            self.register_buffer("feature_norm_ema", torch.ones(1))
+            self.feature_norm_ema_momentum = 0.99
+
         else:
             self.gmae_decoder = Transformer(
-                dim = transformer_dim,
-                depth = cfg.decoder_depth,
-                heads = 16,
-                dim_head = transformer_dim//16,
-                mlp_dim = transformer_dim * 2,
-                cfg = cfg,
+                dim=transformer_dim,
+                depth=cfg.decoder_depth,
+                heads=16,
+                dim_head=transformer_dim // 16,
+                mlp_dim=transformer_dim * 2,
+                cfg=cfg,
             )
-        
-        self.gmae_to_gaussians = nn.Linear(transformer_dim, self.raw_gs_dim * cfg.gaussians_per_token)
 
+        self.gmae_to_gaussians = nn.Linear(
+            transformer_dim, self.raw_gs_dim * cfg.gaussians_per_token
+        )
 
+        if cfg.freeze_geometry_head:
+            freeze_all_params([self.gmae_to_gaussians])
+            self.gaussian_tokens.requires_grad = False
+
+    def load_state_dict(self, state_dict, strict=True, **kwargs):
+        state_dict = remap_instill_to_qkv_checkpoint(state_dict)
+        return super().load_state_dict(state_dict, strict=strict, **kwargs)
 
     def map_pdf_to_opacity(
         self,
@@ -128,7 +176,12 @@ class EncoderVGGT(Encoder[EncoderVGGTCfg]):
 
         # Figure out the exponent.
         cfg = self.cfg.opacity_mapping
-        x = cfg.initial + min(global_step / cfg.warm_up, 1) * (cfg.final - cfg.initial)
+        if self.cfg.freeze_geometry_head:
+            x = cfg.final
+        else:
+            x = cfg.initial + min(global_step / cfg.warm_up, 1) * (
+                cfg.final - cfg.initial
+            )
         exponent = 2**x
 
         # Map the probability density to an opacity.
@@ -137,7 +190,7 @@ class EncoderVGGT(Encoder[EncoderVGGTCfg]):
     def _downstream_head(self, head_num, decout, img_shape, ray_embedding=None):
         B, S, D = decout[-1].shape
         # img_shape = tuple(map(int, img_shape))
-        head = getattr(self, f'head{head_num}')
+        head = getattr(self, f"head{head_num}")
         return head(decout, img_shape, ray_embedding=ray_embedding)
 
     def forward(
@@ -156,50 +209,108 @@ class EncoderVGGT(Encoder[EncoderVGGTCfg]):
                 dec, shape, patch_start_idx = self.backbone(context, return_views=False)
         else:
             dec, shape, patch_start_idx = self.backbone(context, return_views=False)
-            
-        with torch.amp.autocast('cuda', enabled=False):
+
+        with torch.amp.autocast("cuda", enabled=False):
             with torch.no_grad():
-                res = self.dpt_head(dec, context['image'], patch_start_idx)
-                vis_depth = res[0][..., -1]   # shape: (B, N, H, W) ## for visualization
-            
+                res = self.dpt_head(dec, context["image"], patch_start_idx)
+                vis_depth = res[0][..., -1]  # shape: (B, N, H, W) ## for visualization
+
         dec_feat = dec[-1][:, :, patch_start_idx:]
         dec_feat = rearrange(dec_feat, "b v n d -> b (v n) d")
-        all_decoder_tokens = torch.cat((dec_feat, self.gaussian_tokens.unsqueeze(0).expand(b, -1, -1),), dim=1)
-        
+        all_decoder_tokens = torch.cat(
+            (
+                dec_feat,
+                self.gaussian_tokens.unsqueeze(0).expand(b, -1, -1),
+            ),
+            dim=1,
+        )
+
         if self.cfg.feature_dim > 0 and context_feature is not None:
             # context_feature = rearrange(context_feature, "b v c h w -> b (v h w) c")
             # context_feature = torch.cat((context_feature, self.gaussian_tokens_feature.unsqueeze(0).expand(b, -1, -1)), dim=1)
             context_feature = rearrange(context_feature, "b v c h w -> b (v h w) c")
             if self.cfg.different_learnable_tokens:
-                context_feature = torch.cat((context_feature, self.gaussian_tokens_feature.unsqueeze(0).expand(b, -1, -1)), dim=1)
+                context_feature = torch.cat(
+                    (
+                        context_feature,
+                        self.gaussian_tokens_feature.unsqueeze(0).expand(b, -1, -1),
+                    ),
+                    dim=1,
+                )
             else:
-                context_zero_feature = torch.zeros((b, context_feature.shape[1], dec_feat.shape[2] - context_feature.shape[2]), device=device)
-                context_feature = torch.cat((context_feature, context_zero_feature), dim=-1)
-                
-                context_feature = torch.cat((context_feature, self.gaussian_tokens.unsqueeze(0).expand(b, -1, -1)), dim=1)
-                
+                context_zero_feature = torch.zeros(
+                    (
+                        b,
+                        context_feature.shape[1],
+                        dec_feat.shape[2] - context_feature.shape[2],
+                    ),
+                    device=device,
+                )
+                context_feature = torch.cat(
+                    (context_feature, context_zero_feature), dim=-1
+                )
+
+                context_feature = torch.cat(
+                    (
+                        context_feature,
+                        self.gaussian_tokens.unsqueeze(0).expand(b, -1, -1),
+                    ),
+                    dim=1,
+                )
+
         if self.cfg.feature_dim > 0:
-            decoded_tokens, decoded_feature_token = self.gmae_decoder(all_decoder_tokens, mask=None, context_feature=context_feature)  # b n d
+            decoded_tokens, decoded_feature_token = self.gmae_decoder(
+                all_decoder_tokens, mask=None, context_feature=context_feature
+            )  # b n d
         else:
             decoded_tokens = self.gmae_decoder(all_decoder_tokens, mask=None)  # b n d
-            
-        gaussian_params = self.gmae_to_gaussians(decoded_tokens[:, -self.gaussian_tokens.shape[0]:])  # b n d(3+1+d')
-        
+
+        gaussian_params = self.gmae_to_gaussians(
+            decoded_tokens[:, -self.gaussian_tokens.shape[0] :].detach()
+            if self.cfg.freeze_geometry_head
+            else decoded_tokens[:, -self.gaussian_tokens.shape[0] :]
+        )  # b n d(3+1+d')
+
         if self.cfg.feature_dim > 0:
-            feature_gaussian_params = self.feature_gmae_to_gaussians(decoded_feature_token[:, -self.gaussian_tokens.shape[0]:])  # b n d(3+1+d')
-        
-        gaussian_params = rearrange(gaussian_params, "b n (gpt c) -> b (n gpt) c", gpt=self.cfg.gaussians_per_token, c=self.raw_gs_dim)
-        
-        pts_all = gaussian_params[:, :, :3].unsqueeze(-2) + self.anchor_positions.unsqueeze(dim=0).repeat(b,self.cfg.gaussians_per_token,1).unsqueeze(dim=2) # b n 3
+            feature_gaussian_params = self.feature_gmae_to_gaussians(
+                decoded_feature_token[:, -self.gaussian_tokens.shape[0] :]
+            )  # b n d(3+1+d')
+
+        gaussian_params = rearrange(
+            gaussian_params,
+            "b n (gpt c) -> b (n gpt) c",
+            gpt=self.cfg.gaussians_per_token,
+            c=self.raw_gs_dim,
+        )
+
+        pts_all = gaussian_params[:, :, :3].unsqueeze(
+            -2
+        ) + self.anchor_positions.unsqueeze(dim=0).repeat(
+            b, self.cfg.gaussians_per_token, 1
+        ).unsqueeze(dim=2)  # b n 3
         depths = pts_all[..., -1].unsqueeze(-1)
 
         # except_feature = (-self.cfg.gaussian_feature_dim or None) if not self.cfg.feature_dim > 0 else None
         # gaussians = gaussian_params[:, :, 3:except_feature]
-        gaussians = gaussian_params[:,:,3:]
-        gaussians = rearrange(gaussians, "... (srf c) -> ... srf c", srf=self.cfg.num_surfaces)
+        gaussians = gaussian_params[:, :, 3:]
+        gaussians = rearrange(
+            gaussians, "... (srf c) -> ... srf c", srf=self.cfg.num_surfaces
+        )
         densities = gaussians[..., 0].sigmoid().unsqueeze(-1)
         if self.cfg.feature_dim > 0:
-            gaussian_feature = rearrange(feature_gaussian_params, "b n (gpt c) -> b (n gpt) c", gpt=self.cfg.gaussians_per_token, c=self.cfg.gaussian_feature_dim)
+            gaussian_feature = rearrange(
+                feature_gaussian_params,
+                "b n (gpt c) -> b (n gpt) c",
+                gpt=self.cfg.gaussians_per_token,
+                c=self.cfg.gaussian_feature_dim,
+            )
+            direction = F.normalize(gaussian_feature, p=2, dim=-1)
+            mag_raw = self.magnitude_head(
+                decoded_feature_token[:, -self.gaussian_tokens.shape[0] :]
+            ).squeeze(-1)
+            feature_norm = self.feature_norm_ema.detach().clone()
+            magnitude = F.softplus(mag_raw) * feature_norm
+            gaussian_feature = direction * magnitude.unsqueeze(-1)
         else:
             gaussian_feature = None
 
@@ -210,7 +321,7 @@ class EncoderVGGT(Encoder[EncoderVGGTCfg]):
                 depths,
                 self.map_pdf_to_opacity(densities, global_step),
                 rearrange(gaussians[..., 1:], "b n srf c -> b n srf () c"),
-                features = gaussian_feature,
+                features=gaussian_feature,
             )
         else:
             xy_ray, _ = sample_image_grid((h, w), device)
@@ -229,11 +340,11 @@ class EncoderVGGT(Encoder[EncoderVGGTCfg]):
 
         # Dump visualizations if needed.
         if visualization_dump is not None:
-            visualization_dump['depth'] = vis_depth.unsqueeze(-1).unsqueeze(-1)
+            visualization_dump["depth"] = vis_depth.unsqueeze(-1).unsqueeze(-1)
             visualization_dump["scales"] = None
             visualization_dump["rotations"] = None
             visualization_dump["means"] = None
-            visualization_dump['opacities'] = None
+            visualization_dump["opacities"] = None
 
         return Gaussians(
             rearrange(
@@ -252,7 +363,7 @@ class EncoderVGGT(Encoder[EncoderVGGTCfg]):
                 gaussians.opacities,
                 "b n srf spp -> b (n srf spp)",
             ),
-            gaussians.features if gaussians.features is not None else None
+            gaussians.features if gaussians.features is not None else None,
         )
 
     def get_data_shim(self) -> DataShim:

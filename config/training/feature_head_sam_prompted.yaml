@@ -1,0 +1,66 @@
+# @package _global_
+
+defaults:
+  # Dataset is selected at launch, e.g. +dataset@_group_.scannet_2dseg=scannet_2dseg
+  - override /model/encoder: noposplat
+  - override /model/encoder/backbone: croco
+  - override /loss: [mse, lpips]
+
+wandb:
+  name: replica_sam_prompted
+  tags: [replica, 252x252, sam, prompted]
+
+model:
+  encoder:
+    backbone:
+      name: vggt_multi
+    gaussian_adapter:
+      sh_degree: 0
+      clamping: -1
+    name: vggt
+    num_gaussians: 2048
+    gs_params_head_type: dpt_gs
+    pose_free: true
+    intrinsics_embed_loc: None
+    intrinsics_embed_type: None
+    pretrained_weights: "./pretrained_weights/model.pt"
+    init_points: one_point
+    gaussian_feature_dim: 256
+    freeze_backbone: false
+    freeze_instill_qk: false
+    freeze_geometry_head: false
+  decoder:
+    make_scale_invariant: true
+    decrease_lpf_step: 1000
+    feature_detach: false
+
+optimizer:
+  lr: 1e-5
+  warm_up_steps: 1000
+  backbone_lr_multiplier: 0.01
+
+data_loader:
+  train:
+    batch_size: 4
+
+train:
+  context_view_loss: true
+  prompt_mode: prompted
+  prompted_seg_loss_weight: 0.1
+  prompt_strategy: centroid
+  min_object_pixels: 16
+  reproj_model: sam
+  feature_rendering_loss: 1.0
+  sam_model_variant: sam_vit_h
+  sam_checkpoint: "./pretrained_weights/sam_vit_h.pth"
+  use_lora: false
+  lora_rank: 4
+
+trainer:
+  max_steps: 5001
+  val_check_interval: 500
+  accumulate_grad_batches: 2
+
+checkpointing:
+  every_n_train_steps: 500
+  save_top_k: 2

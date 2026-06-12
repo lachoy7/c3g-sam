@@ -1,0 +1,66 @@
+# @package _global_
+# Modal C3G SAM distillation eval on Replica + ScanNet test (vanilla-eval layout).
+# Run via: modal run src/modal/eval_masks.py::c3g --wait
+
+defaults:
+  - /training/feature_head_sam_precomputed
+  - /dataset@_group_.replica_distill: replica_distill
+
+mode: test
+
+wandb:
+  name: c3g_sam_distill_eval
+  mode: online
+  tags: [replica, scannet, sam, distillation, eval, modal, test]
+
+hydra:
+  run:
+    dir: /outputs/eval/${wandb.name}
+
+checkpointing:
+  load: /weights/distillation-base.ckpt
+  debug_log_interval: 1
+
+dataset:
+  replica_distill:
+    roots: [/replica]
+    sam_features_root: /precompute_sam_features/replica
+    augment: false
+    view_sampler:
+      num_target_views: 1
+  scannet_distill:
+    roots: [/scannet]
+    sam_features_root: /precompute_sam_features/scannet
+    augment: false
+    view_sampler:
+      num_target_views: 1
+
+data_loader:
+  test:
+    batch_size: 8
+    num_workers: 4
+    persistent_workers: true
+    pin_memory: true
+    seed: 42
+
+test:
+  compute_scores: false
+  save_image: false
+  save_video: false
+  save_compare: false
+  align_pose: false
+
+trainer:
+  devices: 1
+  limit_test_batches: null
+
+eval:
+  # Mask export (modal_eval_masks.py::c3g → src.evaluation.mask_export)
+  mask_output_dir: /c3g-sam-eval-outputs
+  mask_batch_size: 32
+  prompt_strategy: centroid
+  min_object_pixels: 16
+  limit_frames: null
+  # Optional Lightning test + W&B debug (pass --with-lightning-test on Modal)
+  visualization_count: 5
+  visualization_seed: 42

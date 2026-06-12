@@ -1,4 +1,5 @@
-r""" Helper functions """
+r"""Helper functions"""
+
 import random
 
 import torch
@@ -6,7 +7,7 @@ import numpy as np
 
 
 def fix_randseed(seed):
-    r""" Set random seeds for reproducibility """
+    r"""Set random seeds for reproducibility"""
     if seed is None:
         seed = int(random.random() * 1e5)
     np.random.seed(seed)

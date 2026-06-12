@@ -76,7 +76,9 @@ def angle_error_mat(R1, R2):
 def angle_error_vec(v1, v2):
     n = torch.norm(v1) * torch.norm(v2)
     cos_theta = torch.dot(v1, v2) / n
-    cos_theta = torch.clamp(cos_theta, -1.0, 1.0)  # numerical errors can make it out of bounds
+    cos_theta = torch.clamp(
+        cos_theta, -1.0, 1.0
+    )  # numerical errors can make it out of bounds
     return torch.rad2deg(torch.acos(cos_theta))
 
 

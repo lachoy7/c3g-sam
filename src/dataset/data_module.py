@@ -38,6 +38,8 @@ class DataLoaderStageCfg:
     num_workers: int
     persistent_workers: bool
     seed: int | None
+    limit_batches: int | None = None
+    pin_memory: bool = False
 
 
 @dataclass
@@ -101,6 +103,7 @@ class DataModule(LightningDataModule):
                     generator=self.get_generator(self.data_loader_cfg.train),
                     worker_init_fn=worker_init_fn,
                     persistent_workers=self.get_persistent(self.data_loader_cfg.train),
+                    pin_memory=self.data_loader_cfg.train.pin_memory,
                 )
             )
         return data_loaders if len(data_loaders) > 1 else data_loaders[0]
@@ -112,12 +115,16 @@ class DataModule(LightningDataModule):
             dataset = self.dataset_shim(dataset, "val")
             data_loaders.append(
                 DataLoader(
-                    ValidationWrapper(dataset, 1),
+                    ValidationWrapper(
+                        dataset,
+                        self.data_loader_cfg.val.limit_batches or 1,
+                    ),
                     self.data_loader_cfg.val.batch_size,
                     num_workers=self.data_loader_cfg.val.num_workers,
                     generator=self.get_generator(self.data_loader_cfg.val),
                     worker_init_fn=worker_init_fn,
                     persistent_workers=self.get_persistent(self.data_loader_cfg.val),
+                    pin_memory=self.data_loader_cfg.val.pin_memory,
                 )
             )
         return data_loaders if len(data_loaders) > 1 else data_loaders[0]
@@ -135,6 +142,7 @@ class DataModule(LightningDataModule):
                     generator=self.get_generator(self.data_loader_cfg.test),
                     worker_init_fn=worker_init_fn,
                     persistent_workers=self.get_persistent(self.data_loader_cfg.test),
+                    pin_memory=self.data_loader_cfg.test.pin_memory,
                 )
             )
         return data_loaders if len(data_loaders) > 1 else data_loaders[0]

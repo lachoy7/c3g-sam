@@ -1,0 +1,42 @@
+{
+  "output_dir": "/Users/landonchoy/Desktop/C3G/seg_results",
+  "seed": 42,
+  "colormap_class_ids": [
+    1,
+    3,
+    4,
+    8,
+    9,
+    15,
+    20,
+    24,
+    40,
+    51
+  ],
+  "selections": {
+    "replica": {
+      "scene_id": "room0",
+      "frame_a": "00496",
+      "frame_b": "00500"
+    },
+    "scannet": {
+      "scene_id": "scene0743_00",
+      "frame_a": "01660",
+      "frame_b": "01680"
+    }
+  },
+  "figures": [
+    "/Users/landonchoy/Desktop/C3G/seg_results/gt_replica.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/sam_replica.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/c3gsam_replica.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/c3gsam-dft_replica.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/c3gsam-nomaghead_replica.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/c3gsam-ema-nomag_replica.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/gt_scannet.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/sam_scannet.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/c3gsam_scannet.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/c3gsam-dft_scannet.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/c3gsam-nomaghead_scannet.png",
+    "/Users/landonchoy/Desktop/C3G/seg_results/c3gsam-ema-nomag_scannet.png"
+  ]
+}

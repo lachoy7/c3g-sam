@@ -146,13 +146,23 @@ class DatasetRE10k(IterableDataset):
                 except IndexError:
                     continue
                 except OSError:
-                    print(f"Skipped bad example {example['key']}.")  # DL3DV-Full have some bad images
+                    print(
+                        f"Skipped bad example {example['key']}."
+                    )  # DL3DV-Full have some bad images
                     continue
 
                 # Skip the example if the images don't have the right shape.
-                context_image_invalid = context_images.shape[1:] != (3, *self.cfg.original_image_shape)
-                target_image_invalid = target_images.shape[1:] != (3, *self.cfg.original_image_shape)
-                if self.cfg.skip_bad_shape and (context_image_invalid or target_image_invalid):
+                context_image_invalid = context_images.shape[1:] != (
+                    3,
+                    *self.cfg.original_image_shape,
+                )
+                target_image_invalid = target_images.shape[1:] != (
+                    3,
+                    *self.cfg.original_image_shape,
+                )
+                if self.cfg.skip_bad_shape and (
+                    context_image_invalid or target_image_invalid
+                ):
                     print(
                         f"Skipped bad example {example['key']}. Context shape was "
                         f"{context_images.shape} and target shape was "
@@ -176,7 +186,9 @@ class DatasetRE10k(IterableDataset):
                     scale = 1
 
                 if self.cfg.relative_pose:
-                    extrinsics = camera_normalization(extrinsics[context_indices][0:1], extrinsics)
+                    extrinsics = camera_normalization(
+                        extrinsics[context_indices][0:1], extrinsics
+                    )
 
                 example = {
                     "context": {

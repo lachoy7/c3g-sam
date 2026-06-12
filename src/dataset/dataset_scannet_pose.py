@@ -95,7 +95,6 @@ class DatasetScannetPose(IterableDataset):
             ]
 
         for scene, rel_pose in zip(self.pairs, self.rel_pose):
-
             scene_name = f"scene0{scene[0]}_00"
             im_A_path = os.path.join(
                 self.data_root,
@@ -120,17 +119,17 @@ class DatasetScannetPose(IterableDataset):
                 [
                     np.array([float(i) for i in r.split()])
                     for r in open(
-                    osp.join(
-                        self.data_root,
-                        "scans_test",
-                        scene_name,
-                        "intrinsic",
-                        "intrinsic_color.txt",
-                    ),
-                    "r",
-                )
-                .read()
-                .split("\n")
+                        osp.join(
+                            self.data_root,
+                            "scans_test",
+                            scene_name,
+                            "intrinsic",
+                            "intrinsic_color.txt",
+                        ),
+                        "r",
+                    )
+                    .read()
+                    .split("\n")
                     if r
                 ]
             )
@@ -169,8 +168,12 @@ class DatasetScannetPose(IterableDataset):
                 src_bottom = min(h, h + shift_y)
 
                 # Copy the shifted image to the new image
-                new_image[:, :, pad_top:pad_top + src_bottom - src_top,
-                pad_left:pad_left + src_right - src_left] = image[:, :, src_top:src_bottom, src_left:src_right]
+                new_image[
+                    :,
+                    :,
+                    pad_top : pad_top + src_bottom - src_top,
+                    pad_left : pad_left + src_right - src_left,
+                ] = image[:, :, src_top:src_bottom, src_left:src_right]
 
                 # Calculate new intrinsic parameters
                 new_cx = new_w // 2
@@ -199,7 +202,9 @@ class DatasetScannetPose(IterableDataset):
             K[0, :3] /= w
             K[1, :3] /= h
 
-            intrinsics = torch.tensor(K, dtype=torch.float32).unsqueeze(0).repeat(2, 1, 1)
+            intrinsics = (
+                torch.tensor(K, dtype=torch.float32).unsqueeze(0).repeat(2, 1, 1)
+            )
 
             overlap = torch.tensor([0.5], dtype=torch.float32)
             scale = torch.tensor([1.0], dtype=torch.float32)

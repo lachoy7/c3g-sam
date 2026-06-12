@@ -34,7 +34,11 @@ class RootCfg:
     config_name="compute_metrics",
 )
 def evaluate(cfg_dict: DictConfig):
-    cfg = load_typed_config(cfg_dict, RootCfg, {list[DatasetCfgWrapper]: separate_dataset_cfg_wrappers},)
+    cfg = load_typed_config(
+        cfg_dict,
+        RootCfg,
+        {list[DatasetCfgWrapper]: separate_dataset_cfg_wrappers},
+    )
     set_cfg(cfg_dict)
     torch.manual_seed(cfg.seed)
     trainer = Trainer(max_epochs=-1, accelerator="gpu")

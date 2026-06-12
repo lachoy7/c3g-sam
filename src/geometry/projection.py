@@ -70,6 +70,7 @@ def project(
     in_front_of_camera = points[..., -1] >= 0
     return project_camera_space(points, intrinsics, epsilon=epsilon), in_front_of_camera
 
+
 def project_camera_space_reproj(
     points: Float[Tensor, "*#batch dim"],
     intrinsics: Float[Tensor, "*#batch dim dim"],
@@ -79,8 +80,9 @@ def project_camera_space_reproj(
     points = points / (points[..., -1:] + epsilon)
     points = points.nan_to_num(posinf=infinity, neginf=-infinity)
     points = torch.einsum("bij,bnj->bni", intrinsics, points)
-    
+
     return points[..., :-1]
+
 
 def project_reproj(
     points: Float[Tensor, "*#batch dim"],
@@ -94,6 +96,7 @@ def project_reproj(
     points = homogenize_points(points)
     points = torch.einsum("bij,bnj->bni", extrinsics.inverse(), points)[..., :-1]
     return project_camera_space_reproj(points, intrinsics, epsilon=epsilon)
+
 
 def unproject(
     coordinates: Float[Tensor, "*#batch dim"],

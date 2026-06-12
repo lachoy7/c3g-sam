@@ -1,0 +1,187 @@
+# Datasets and View Sampling
+
+## Dataset Registry
+
+Datasets are registered in `src/dataset/__init__.py`:
+
+```python
+DATASETS = {
+    "re10k": DatasetRE10k,
+    "dl3dv": DatasetRE10k,       # same class, different config
+    "scannetpp": DatasetRE10k,   # same class, different config
+    "scannet_pose": DatasetScannetPose,
+    "scannet": DatasetScannet,
+    "replica": DatasetReplica,
+}
+```
+
+All datasets are `IterableDataset` subclasses that yield `UnbatchedExample` dicts.
+
+## Dataset Adapters
+
+### DatasetRE10k (`src/dataset/dataset_re10k.py`)
+
+The primary training dataset. Loads pre-chunked `.torch` files containing camera poses and images.
+
+| Field | Value |
+|-------|-------|
+| Near plane | 0.1 |
+| Far plane | 100.0 |
+| Input shape | 224×224 |
+| Original shape | 360×640 |
+| Pose format | 18-float vector (fx, fy, cx, cy, _,_, R|t) |
+
+Key behaviors:
+
+- Shuffles chunks each epoch during training
+- Distributes chunks across workers during testing
+- Normalizes baseline to 1 when `make_baseline_1=True`
+- Applies relative pose normalization (first context view becomes identity)
+- Applies augmentation shim (training only) and crop shim
+- Filters by max FOV and baseline range
+
+Also used for DL3DV and ScanNet++ with different root paths.
+
+### DatasetScannet (`src/dataset/dataset_scannet.py`)
+
+Scene understanding evaluation dataset. Loads images, depth maps, and semantic labels.
+
+| Field | Value |
+|-------|-------|
+| Near plane | 0.01 |
+| Far plane | 100.0 |
+| Labels | wall, floor, ceiling, chair, table, sofa, bed, other |
+| Label mapping | NYU40 → 8-class via `scannetv2-labels.combined.tsv` |
+
+Key behaviors:
+
+- Reads `selected_seqs_test.json` for test scene selection
+- Uses `llff_hold=8` with `test_ids=[1, 4]` for view selection
+- Crops and resizes images with Lanczos interpolation
+- Maps semantic labels from NYU40 classes to 8 target classes
+- Yields `label` field in both context and target views
+
+### DatasetReplica (`src/dataset/dataset_replica.py`)
+
+Scene understanding evaluation on Replica scenes.
+
+| Field | Value |
+|-------|-------|
+| Near plane | 0.01 |
+| Far plane | 100.0 |
+| Scenes | office3, office4, room1 |
+| Per-scene labels | Varying (e.g., wall, ceiling, floor, chair, table for office3) |
+
+Key behaviors:
+
+- Reads COLMAP binary files for camera poses
+- Per-scene label mappings defined in code
+- Uses `llff_hold=8` with `test_ids=[1]`
+- Provides `text` field with scene-specific label names
+- Supports `context_eval` mode for evaluating on context views
+
+### DatasetScannetPose (`src/dataset/dataset_scannet_pose.py`)
+
+Variant for pose estimation evaluation on ScanNet.
+
+## View Samplers
+
+View samplers determine which frames become context views and which become target views. Registered in `src/dataset/view_sampler/__init__.py`:
+
+```python
+VIEW_SAMPLERS = {
+    "all": ViewSamplerAll,
+    "arbitrary": ViewSamplerArbitrary,
+    "bounded": ViewSamplerBounded,
+    "evaluation": ViewSamplerEvaluation,
+}
+```
+
+### ViewSamplerBounded (`bounded`)
+
+The default training sampler. Picks context views with a bounded frame distance and target views between them.
+
+Config (`config/dataset/view_sampler/bounded.yaml`):
+
+```yaml
+name: bounded
+num_target_views: 1
+num_context_views: 2
+min_distance_between_context_views: 2
+max_distance_between_context_views: 6
+min_distance_to_context_views: 0
+warm_up_steps: 0
+initial_min_distance_between_context_views: 2
+initial_max_distance_between_context_views: 6
+```
+
+Features:
+
+- **Warm-up scheduling**: Gradually increases context view distance during training
+- **Multi-view support**: When `num_context_views > 2`, picks extra views between left/right
+- **Circular camera support**: Handles wrap-around for 360° datasets
+- **Test mode**: Uses all views between context pair as targets
+
+### ViewSamplerEvaluation (`evaluation`)
+
+Loads pre-computed evaluation indices from a JSON file.
+
+```yaml
+name: evaluation
+index_path: assets/evaluation_index_re10k.json
+num_context_views: 2
+```
+
+The JSON maps scene names to `IndexEntry` objects:
+
+```json
+{
+  "scene_name": {
+    "context": [left_idx, right_idx],
+    "target": [idx1, idx2, idx3],
+    "overlap": 0.75
+  }
+}
+```
+
+Supports expanding 2-view indices to multi-view via `add_additional_context_index`.
+
+### ViewSamplerAll (`all`)
+
+Returns all views as both context and target. Used for overfitting experiments.
+
+### ViewSamplerArbitrary (`arbitrary`)
+
+Picks random context and target views without distance constraints.
+
+## Evaluation Index JSONs
+
+Pre-computed evaluation indices in `assets/`:
+
+| File | Dataset | Purpose |
+|------|---------|---------|
+| `evaluation_index_re10k.json` | RealEstate10K | NVS evaluation pairs |
+| `evaluation_index_acid.json` | ACID | NVS evaluation pairs |
+| `evaluation_index_dtu.json` | DTU | NVS evaluation pairs |
+| `evaluation_index_scannetpp.json` | ScanNet++ | NVS evaluation pairs |
+
+Generated by `EvaluationIndexGenerator` (`src/evaluation/evaluation_index_generator.py`) which:
+
+1. Picks random context frames
+2. Steps away until overlap falls within `[min_overlap, max_overlap]`
+3. Picks random target views between context pair
+4. Saves the index as JSON
+
+## Data Shims
+
+Shims are post-processing transforms applied after the data loader returns a batch. Located in `src/dataset/shims/`:
+
+| Shim | Purpose |
+|------|---------|
+| `augmentation_shim` | Random color jitter and flipping (training only) |
+| `bounds_shim` | Adjusts near/far planes based on scene geometry |
+| `crop_shim` | Center-crops and resizes to `input_image_shape` |
+| `normalize_shim` | Normalizes images to [-1, 1] range |
+| `patch_shim` | Ensures image dimensions are divisible by patch size |
+
+The encoder can also register its own data shim via `get_data_shim()`, which is combined with other shims in `ModelWrapper.__init__`.

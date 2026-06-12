@@ -9,7 +9,7 @@ from .visualization.encoder_visualizer import EncoderVisualizer
 ENCODERS = {
     "noposplat": (EncoderNoPoSplat, None),
     "noposplat_multi": (EncoderNoPoSplatMulti, None),
-    "vggt": (EncoderVGGT, None)
+    "vggt": (EncoderVGGT, None),
 }
 
 EncoderCfg = EncoderNoPoSplatCfg | EncoderVGGTCfg
