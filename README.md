@@ -4,7 +4,7 @@ Compact 3D Gaussians with SAM ViT-H feature distillation and prompted segmentati
 
 > **C3G-SAM** extends [C3G: Learning Compact 3D Representations with 2K Gaussians](https://arxiv.org/abs/2512.04021) (CVPR 2026) with [Segment Anything (SAM)](https://github.com/facebookresearch/segment-anything) integration. Multi-view context images pass through a **VGGT encoder** and an **Instill Transformer** with separate **Geometry** and **Feature** streams to produce 2048 3D Gaussians. Rendered Gaussian features are either matched to precomputed SAM encoder outputs (distillation) or decoded into segmentation masks via a frozen **SAM mask decoder** (prompted training).
 
-**Every major workflow runs locally or on [Modal](https://modal.com)** — precompute, training (distillation and prompted), mask export, scoring, ablations, and figure generation. Modal apps live under [`src/modal/`](src/modal/); use [`scripts/run_modal.sh`](scripts/run_modal.sh) or `python -m src.main --modal …` without changing Hydra configs. See [docs/12-c3g-sam.md](docs/12-c3g-sam.md) for volumes and checkpoints.
+**Every major workflow runs locally or on [Modal](https://modal.com)** — precompute, training (distillation and prompted), mask export, scoring, ablations, and figure generation. Modal apps live under `[src/modal/](src/modal/)`; use `[scripts/run_modal.sh](scripts/run_modal.sh)` or `python -m src.main --modal …` without changing Hydra configs. See [docs/12-c3g-sam.md](docs/12-c3g-sam.md) for volumes and checkpoints.
 
 This repository is a fork of the upstream [C3G codebase](https://github.com/cvlab-kaist/C3G). We gratefully acknowledge the original authors:
 
@@ -16,7 +16,11 @@ This repository is a fork of the upstream [C3G codebase](https://github.com/cvla
 
 ## Architecture
 
-The diagram above shows the full C3G-SAM pipeline:
+![C3G-SAM architecture diagram](diagram.png)
+
+*Context images and 2048 Gaussian tokens pass through VGGT and SAM encoders, an Instill Transformer (Geometry + Feature streams), a Gaussian decoder and rasterizer, and a frozen SAM mask decoder to produce a target mask.*
+
+The diagram shows the full C3G-SAM pipeline:
 
 
 | Component                         | Role                                                                                                      |
@@ -167,7 +171,7 @@ modal run src/modal/eval_masks.py::c3g --wait
 modal run src/modal/get_scores.py --experiment c3gsam --wait
 ```
 
-Training checkpoints are written to the **`c3g-train-outputs`** volume at `/outputs/runs/<wandb.name>/checkpoints/`. Modal jobs detach by default; pass `--wait` (or set `C3G_MODAL_WAIT=1` in the shell scripts) to block until completion.
+Training checkpoints are written to the `**c3g-train-outputs**` volume at `/outputs/runs/<wandb.name>/checkpoints/`. Modal jobs detach by default; pass `--wait` (or set `C3G_MODAL_WAIT=1` in the shell scripts) to block until completion.
 
 For a full local vs Modal command matrix, see **Entry points** below and [docs/prompted_training_modal.md](docs/prompted_training_modal.md).
 
@@ -175,7 +179,9 @@ For a full local vs Modal command matrix, see **Entry points** below and [docs/p
 
 ## Entry points
 
-Local and Modal commands are paired below. Prefer **`scripts/run_local.sh`** / **`scripts/run_modal.sh`** for the full train → eval → score workflow.
+Local and Modal commands are paired below. Prefer `**scripts/run_local.sh`** / `**scripts/run_modal.sh**` for the full train → eval → score workflow.
+
+
 | Task                        | Local                                            | Modal                                                   |
 | --------------------------- | ------------------------------------------------ | ------------------------------------------------------- |
 | Precompute SAM features     | `scripts/run_local.sh precompute`                | `scripts/run_modal.sh precompute --wait`                |
@@ -195,7 +201,7 @@ Full volume and ablation reference: [docs/12-c3g-sam.md](docs/12-c3g-sam.md).
 
 ## Evaluation & ablations
 
-Upload trained checkpoints to Modal volume `**c3g-weights`** before eval.
+Upload trained checkpoints to Modal volume `**c3g-weights**` before eval.
 
 
 | Method                      | Checkpoint on `c3g-weights`               | Export volume                    | Score                               |
@@ -207,7 +213,15 @@ Upload trained checkpoints to Modal volume `**c3g-weights`** before eval.
 | C3G-SAM no EMA, no mag      | `ema-nomag.ckpt`                          | `c3g-sam-ema-nomag-eval-outputs` | `--experiment c3gsam_noema-nomag`   |
 
 
-Metrics: global pixel IoU, boundary IoU, and warp mIoU on Replica (8 scenes) + ScanNet test (24 scenes). Pre-generated figures: `[c3gsam_results/](c3gsam_results/)`.
+Metrics: global pixel IoU, boundary IoU, and warp mIoU on Replica (8 scenes) + ScanNet test (24 scenes). Pre-generated figures: [c3gsam_results/](c3gsam_results/).
+
+### Results & interpretation
+
+We ran the full pipeline — distillation and prompted training, mask export, scoring, and ablations against vanilla SAM — on Replica and ScanNet 2D segmentation. **In our view, C3G-SAM did not perform as well as we had hoped.** C3G-SAM consistently lagged behind vanilla SAM on global IoU, boundary IoU, and warp mIoU, and ablations on the feature head (EMA, magnitude head, up-projection) did not close that gap.
+
+Our working hypothesis is that the bottleneck is **C3G’s fixed budget of 2048 Gaussians**, not the SAM integration itself. SAM ViT-H produces dense 256×64×64 patch features; squeezing that signal through a compact 3D field with only 2048 splats forces heavy compression before the mask decoder ever runs. Geometry and RGB may fit that budget reasonably well (C3G’s original setting), but **open-vocabulary, per-pixel semantic structure likely needs more spatial capacity** than 2K Gaussians can represent. Distillation can match coarse feature statistics; prompted training can still optimize mask losses — yet both paths render through the same limited Gaussian set, so fine boundaries and thin structures are hard to recover.
+
+We are sharing this repo as a complete, reproducible experiment (local + Modal) rather than as a strong segmentation baseline. If you extend this line of work, increasing Gaussian count or relaxing the compact representation may be the most direct lever to test.
 
 ---
 
